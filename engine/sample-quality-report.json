@@ -1,0 +1,32 @@
+{
+  "root": "D:\\ai-stack-mapper\\sample_project",
+  "generated_at": "2026-07-24T03:37:09.095842Z",
+  "scanned_files": 4,
+  "changed_only": false,
+  "fail_on": "high",
+  "status": "passed",
+  "review_mode": "static",
+  "llm_model": "",
+  "severity_counts": {
+    "info": 0,
+    "low": 0,
+    "medium": 1,
+    "high": 0,
+    "critical": 0
+  },
+  "findings": [
+    {
+      "severity": "medium",
+      "area": "LLM reliability",
+      "file": "agent_app\\deployment_examples.py",
+      "line": 39,
+      "title": "LLM call does not show an inline timeout.",
+      "suggestion": "Set request timeout and retry/fallback behavior near the model call or provider client.",
+      "rule_id": "llm-timeout-missing",
+      "feature": "general",
+      "source": "static"
+    }
+  ],
+  "skipped_files": [],
+  "llm_warnings": []
+}

@@ -60,9 +60,9 @@ def main(argv=None) -> int:
     llm_config = None
     if llm_requested:
         llm_config = QualityLLMConfig(
-            base_url=args.llm_base_url,
+            base_url=args.llm_base_url or DEFAULT_LLM_BASE_URL,
             api_key=args.llm_api_key,
-            model=args.llm_model,
+            model=args.llm_model or DEFAULT_LLM_MODEL,
         )
         if not llm_config.api_key:
             print(

@@ -5,7 +5,7 @@ from typing import List
 
 from .models import ScanResult
 from .ast_visitor import scan_source
-from .config_scanner import scan_dependency_file, scan_mcp_config, scan_env_file
+from .config_scanner import scan_dependency_file, scan_mcp_config, scan_env_file, scan_js_dependency_file
 from .registry import MCP_CONFIG_FILENAMES, DEPENDENCY_FILES
 
 IGNORE_DIRS = {
@@ -15,6 +15,7 @@ IGNORE_DIRS = {
 }
 
 ENV_FILENAMES = {".env", ".env.example", ".env.local", ".env.sample"}
+JS_DEPENDENCY_FILENAMES = {"package.json"}
 
 
 def _iter_files(root: str):
@@ -51,6 +52,10 @@ def scan_directory(root: str) -> ScanResult:
                 with open(path, "r", encoding="utf-8", errors="ignore") as f:
                     source = f.read()
                 findings = scan_dependency_file(rel, source)
+            elif fn in JS_DEPENDENCY_FILENAMES:
+                with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                    source = f.read()
+                findings = scan_js_dependency_file(rel, source)
             elif fn in ENV_FILENAMES:
                 with open(path, "r", encoding="utf-8", errors="ignore") as f:
                     source = f.read()

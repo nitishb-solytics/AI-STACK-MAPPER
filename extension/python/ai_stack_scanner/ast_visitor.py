@@ -202,7 +202,17 @@ class FileVisitor(ast.NodeVisitor):
             package = ""
             if isinstance(func, ast.Name) and func.id in self.import_map:
                 package = self.import_map[func.id][0]
+            elif isinstance(func, ast.Attribute):
+                dotted = _dotted_name(func)
+                root = dotted.split(".")[0] if dotted else ""
+                if root in self.import_map:
+                    package = self.import_map[root][0]
+                    full_import = self.import_map[root][1]
+                    if name == "Client" and full_import.startswith("google.genai"):
+                        display = "Google GenAI client"
             confidence = CONFIDENCE_HIGH if name not in ("Client", "Server", "Agent") else CONFIDENCE_MEDIUM
+            if name == "Client" and package == "google":
+                confidence = CONFIDENCE_HIGH
             deployment_target = (
                 DEPLOYMENT_SELF_HOSTED
                 if (name in SELF_HOSTED_CONSTRUCTORS or package in SELF_HOSTED_PACKAGES)

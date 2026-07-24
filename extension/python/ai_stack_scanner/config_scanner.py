@@ -8,7 +8,14 @@ from typing import List, Tuple
 
 from .models import Occurrence, CATEGORY_MCP, CATEGORY_LLM, CONFIDENCE_MEDIUM, CONFIDENCE_LOW
 from .models import DEPLOYMENT_CLOUD, DEPLOYMENT_SELF_HOSTED
-from .registry import PACKAGE_REGISTRY, ENV_KEY_PATTERNS, SELF_HOSTED_PACKAGES
+from .registry import (
+    PACKAGE_REGISTRY,
+    ENV_KEY_PATTERNS,
+    SELF_HOSTED_PACKAGES,
+    JS_PACKAGE_REGISTRY,
+    JS_PACKAGE_PREFIX_FALLBACKS,
+    JS_SELF_HOSTED_PACKAGES,
+)
 from .ast_visitor import Finding
 
 _REQUIREMENTS_LINE_RE = re.compile(r"^\s*([A-Za-z0-9_\-\.]+)")
@@ -56,6 +63,49 @@ def scan_dependency_file(filename: str, source: str) -> List[Finding]:
                         detail=raw, deployment_target=deployment_target,
                     ),
                 ))
+    return findings
+
+
+def scan_js_dependency_file(filename: str, source: str) -> List[Finding]:
+    """package.json -> declared-dependency findings (JS/TS equivalent of
+    scan_dependency_file above). This engine doesn't do real JS/TS AST
+    analysis -- a repo's actual agent/orchestration code written in JS/TS
+    is invisible to it -- but declared npm dependencies are still a real,
+    medium-confidence signal, exactly like requirements.txt/pyproject.toml
+    for Python.
+    """
+    findings: List[Finding] = []
+    try:
+        data = json.loads(source)
+    except json.JSONDecodeError:
+        return findings
+
+    deps = {}
+    for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+        section = data.get(key)
+        if isinstance(section, dict):
+            deps.update(section)
+
+    for name, version in deps.items():
+        match = None
+        if name in JS_PACKAGE_REGISTRY:
+            match = JS_PACKAGE_REGISTRY[name]
+        else:
+            for prefix, category, display in JS_PACKAGE_PREFIX_FALLBACKS:
+                if name.startswith(prefix):
+                    match = (category, display)
+                    break
+        if not match:
+            continue
+        category, display = match
+        deployment_target = DEPLOYMENT_SELF_HOSTED if name in JS_SELF_HOSTED_PACKAGES else DEPLOYMENT_CLOUD
+        findings.append((
+            category, display, name,
+            Occurrence(
+                filename, 1, "dependency", CONFIDENCE_MEDIUM,
+                detail=f"{name}@{version}", deployment_target=deployment_target,
+            ),
+        ))
     return findings
 
 

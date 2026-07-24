@@ -78,6 +78,7 @@ class Component:
     category: str
     name: str
     package: str = ""
+    packages: List[str] = field(default_factory=list)
     occurrences: List[Occurrence] = field(default_factory=list)
     # Populated only when --enrich is used (optional, LLM-generated, off by
     # default). Unlike everything else on this class, this is probabilistic
@@ -104,10 +105,12 @@ class Component:
         return sorted({o.deployment_target for o in self.occurrences})
 
     def to_dict(self) -> Dict[str, Any]:
+        packages = sorted({p for p in ([self.package] + self.packages) if p})
         d: Dict[str, Any] = {
             "category": self.category,
             "name": self.name,
-            "package": self.package,
+            "package": ", ".join(packages),
+            "packages": packages,
             "confidence": self.confidence,
             "count": self.count,
             "deployment_targets": self.deployment_targets,
@@ -124,12 +127,14 @@ class ScanResult:
     generated_at: str
     scanned_files: int
     skipped_files: List[str] = field(default_factory=list)
-    components: Dict[str, Component] = field(default_factory=dict)  # key: category|name|package
+    components: Dict[str, Component] = field(default_factory=dict)  # key: category|name
 
     def add(self, category: str, name: str, package: str, occurrence: Occurrence) -> None:
-        key = f"{category}|{name}|{package}"
+        key = f"{category}|{name}"
         if key not in self.components:
             self.components[key] = Component(category=category, name=name, package=package)
+        elif package and package not in self.components[key].packages and package != self.components[key].package:
+            self.components[key].packages.append(package)
         self.components[key].occurrences.append(occurrence)
 
     def to_dict(self) -> Dict[str, Any]:

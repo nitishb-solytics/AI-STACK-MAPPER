@@ -234,3 +234,69 @@ KNOWN_CLOUD_DOMAINS = [
 # free, static "prompt_hint" -- purely for context; never sent anywhere
 # unless the optional --enrich LLM step is explicitly enabled.
 PROMPT_BEARING_KWARGS = {"messages", "prompt", "system", "system_prompt", "input", "instructions"}
+
+# ---------------------------------------------------------------------------
+# 7) JS/TS package.json dependency names -> (category, display name).
+#
+# This engine is Python-only for real AST analysis (imports, instantiation,
+# decorators, base classes) -- a JS/TS repo's actual agent/orchestration
+# code is invisible to it. This registry closes part of that gap cheaply:
+# declared npm dependencies are a MEDIUM-confidence signal (same as Python's
+# requirements.txt/pyproject.toml handling), without needing a full JS/TS
+# AST parser. Keyed on the exact package name as it appears in
+# package.json's dependencies/devDependencies/peerDependencies.
+# ---------------------------------------------------------------------------
+JS_PACKAGE_REGISTRY = {
+    # LLM providers / SDKs
+    "openai": (CATEGORY_LLM, "OpenAI (JS/TS SDK)"),
+    "@anthropic-ai/sdk": (CATEGORY_LLM, "Anthropic (JS/TS SDK)"),
+    "@anthropic-ai/vertex-sdk": (CATEGORY_LLM, "Anthropic (Vertex, JS/TS SDK)"),
+    "@google/generative-ai": (CATEGORY_LLM, "Google Gemini (JS/TS SDK)"),
+    "@google/genai": (CATEGORY_LLM, "Google Gemini / Vertex AI (JS/TS SDK)"),
+    "@azure/openai": (CATEGORY_LLM, "Azure OpenAI (JS/TS SDK)"),
+    "cohere-ai": (CATEGORY_LLM, "Cohere (JS/TS SDK)"),
+    "@mistralai/mistralai": (CATEGORY_LLM, "Mistral AI (JS/TS SDK)"),
+    "groq-sdk": (CATEGORY_LLM, "Groq (JS/TS SDK)"),
+    "replicate": (CATEGORY_LLM, "Replicate (JS/TS SDK)"),
+    "together-ai": (CATEGORY_LLM, "Together AI (JS/TS SDK)"),
+    "ollama": (CATEGORY_LLM, "Ollama (local, JS/TS client)"),
+
+    # MCP
+    "@modelcontextprotocol/sdk": (CATEGORY_MCP, "Model Context Protocol SDK (JS/TS)"),
+    "@playwright/mcp": (CATEGORY_MCP, "Playwright MCP server"),
+
+    # Agent / orchestration frameworks
+    "langchain": (CATEGORY_AGENT_FRAMEWORK, "LangChain (JS/TS)"),
+    "@langchain/core": (CATEGORY_AGENT_FRAMEWORK, "LangChain (JS/TS)"),
+    "@langchain/community": (CATEGORY_AGENT_FRAMEWORK, "LangChain (JS/TS)"),
+    "@langchain/openai": (CATEGORY_AGENT_FRAMEWORK, "LangChain (JS/TS)"),
+    "@langchain/anthropic": (CATEGORY_AGENT_FRAMEWORK, "LangChain (JS/TS)"),
+    "@langchain/google-genai": (CATEGORY_AGENT_FRAMEWORK, "LangChain (JS/TS)"),
+    "@langchain/langgraph": (CATEGORY_AGENT_FRAMEWORK, "LangGraph (JS/TS)"),
+    "llamaindex": (CATEGORY_AGENT_FRAMEWORK, "LlamaIndex (JS/TS)"),
+    "ai": (CATEGORY_AGENT_FRAMEWORK, "Vercel AI SDK"),
+    "autogen": (CATEGORY_AGENT_FRAMEWORK, "AutoGen (JS/TS)"),
+
+    # Vector stores / memory
+    "chromadb": (CATEGORY_VECTOR_STORE, "Chroma (JS/TS)"),
+    "@pinecone-database/pinecone": (CATEGORY_VECTOR_STORE, "Pinecone (JS/TS)"),
+    "weaviate-client": (CATEGORY_VECTOR_STORE, "Weaviate (JS/TS)"),
+    "weaviate-ts-client": (CATEGORY_VECTOR_STORE, "Weaviate (JS/TS)"),
+    "@qdrant/js-client-rest": (CATEGORY_VECTOR_STORE, "Qdrant (JS/TS)"),
+}
+
+# Scoped-org prefixes for packages not individually listed above (mirrors
+# the Python side's `known + "_"` prefix fallback in scan_dependency_file).
+# e.g. an unlisted `@langchain/xyz` package still gets attributed to LangChain.
+JS_PACKAGE_PREFIX_FALLBACKS = [
+    ("@langchain/", CATEGORY_AGENT_FRAMEWORK, "LangChain (JS/TS)"),
+    ("@google/", CATEGORY_LLM, "Google Gemini / Vertex AI (JS/TS SDK)"),
+    ("@anthropic-ai/", CATEGORY_LLM, "Anthropic (JS/TS SDK)"),
+    ("@modelcontextprotocol/", CATEGORY_MCP, "Model Context Protocol SDK (JS/TS)"),
+    ("@pinecone-database/", CATEGORY_VECTOR_STORE, "Pinecone (JS/TS)"),
+    ("@qdrant/", CATEGORY_VECTOR_STORE, "Qdrant (JS/TS)"),
+]
+
+# JS packages that are inherently self-hosted (mirrors SELF_HOSTED_PACKAGES).
+JS_SELF_HOSTED_PACKAGES = {"ollama"}
+
