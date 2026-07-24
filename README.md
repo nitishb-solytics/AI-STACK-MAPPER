@@ -51,6 +51,27 @@ patterns (tools assembled from a runtime dict of callables, etc.) and can
 occasionally mistag an unrelated class literally named `Agent`. Treat it as
 a fast, high-recall map to jump off from, not a certified inventory.
 
+## Scanner modes for stack inventory
+
+The stack inventory scanner can run in three modes:
+
+| Mode | What it does | When to use |
+|---|---|---|
+| `static` | Uses deterministic Python AST scanning plus dependency/config scanning. No LLM call. | Default, safest for CI and private repos. |
+| `llm` | Uses an OpenAI-compatible LLM to discover AI stack components from small redacted snippets and dependency/config evidence. | When you want semantic discovery for custom agents/tools that static rules may miss. |
+| `hybrid` | Runs static first, then adds LLM-discovered components into the same report. | Recommended when an API key is available and you want better coverage. |
+
+`enrich: true` is separate. It does not control discovery mode. It asks the
+LLM to add short explanatory context to components that were already found.
+
+So the clean mental model is:
+
+- `scanner-mode` = how components are detected.
+- `enrich` = whether detected components get AI-generated descriptions.
+
+If `scanner-mode` is `llm` or `hybrid` but no API key is configured, the
+scanner falls back to `static` so the workflow still produces a report.
+
 ## 1. Run the engine standalone
 
 No dependencies beyond Python 3.8+:
@@ -60,6 +81,8 @@ cd engine
 pip install -e .          # installs the `ai-stack-scan` command
 ai-stack-scan --path ../sample_project --format markdown
 ai-stack-scan --path ../sample_project --format json --output report.json
+ai-stack-scan --path ../sample_project --scanner-mode static --markdown-output AI_STACK.md --json-output ai-stack-report.json
+ai-stack-scan --path ../sample_project --scanner-mode hybrid --llm-api-key "$AI_STACK_LLM_API_KEY" --markdown-output AI_STACK.md --json-output ai-stack-report.json
 ai-stack-review --path ../sample_project --format markdown --output ai-quality-report.md --no-fail
 ai-stack-review --path ../sample_project --format markdown --output ai-quality-report.md --fail-on high
 ```
@@ -145,10 +168,13 @@ jobs:
         with:
           path: "."
           mode: "both"
+          scanner-mode: "hybrid"
+          enrich: "false"
           changed-only: "true"
           base-ref: ${{ github.base_ref }}
           fail-on: "high"
           llm-review: "true"
+          llm-api-key: ${{ secrets.AI_STACK_LLM_API_KEY }}
           llm-base-url: "https://openrouter.ai/api/v1"
           llm-model: "google/gemma-4-26b-a4b-it:free"
 
@@ -168,10 +194,15 @@ To actually block merges, add this workflow as a required status check in the
 DocSearch branch protection rule. The action fails when `ai-stack-review`
 finds issues at or above the selected threshold.
 
-LLM review is optional. If `AI_STACK_USE_LLM` / `llm-review` is not enabled,
-the quality gate uses the deterministic static rules only. If enabled, it adds
-LLM-generated findings to the same Markdown and JSON reports, then applies the
-same `fail-on` threshold.
+LLM usage is optional and split by job:
+
+- Stack inventory: `scanner-mode: "static"` is fully static. Use
+  `scanner-mode: "llm"` for LLM-only discovery, or `"hybrid"` for static +
+  LLM discovery.
+- Stack inventory enrichment: `enrich: "true"` adds AI-generated context to
+  already detected components.
+- Quality gate: `llm-review: "true"` adds LLM review findings to the static
+  quality rules, then applies the same `fail-on` threshold.
 
 For a strict rollout, use `fail-on: "medium"`. For a safer first rollout,
 keep `fail-on: "high"` and review the uploaded report artifacts before

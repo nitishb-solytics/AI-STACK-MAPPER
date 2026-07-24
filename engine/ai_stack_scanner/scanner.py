@@ -25,12 +25,13 @@ def _iter_files(root: str):
             yield os.path.join(dirpath, fn)
 
 
-def scan_directory(root: str) -> ScanResult:
+def scan_directory(root: str, scanner_mode: str = "static") -> ScanResult:
     root = os.path.abspath(root)
     result = ScanResult(
         root=root,
         generated_at=datetime.datetime.utcnow().isoformat() + "Z",
         scanned_files=0,
+        scanner_mode=scanner_mode,
     )
 
     for path in _iter_files(root):

@@ -13,6 +13,7 @@ def render_markdown(data: dict) -> str:
     lines.append("# AI Stack Report")
     lines.append("")
     lines.append(f"_Generated: {data['generated_at']}_  ")
+    lines.append(f"_Scanner mode: {data.get('scanner_mode', 'static')}_  ")
     lines.append(f"_Scanned {data['scanned_files']} Python file(s), "
                   f"found {data['total_components']} distinct component(s)._")
     lines.append("")

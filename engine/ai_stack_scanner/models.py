@@ -126,6 +126,7 @@ class ScanResult:
     root: str
     generated_at: str
     scanned_files: int
+    scanner_mode: str = "static"
     skipped_files: List[str] = field(default_factory=list)
     components: Dict[str, Component] = field(default_factory=dict)  # key: category|name
 
@@ -146,6 +147,7 @@ class ScanResult:
         return {
             "root": self.root,
             "generated_at": self.generated_at,
+            "scanner_mode": self.scanner_mode,
             "scanned_files": self.scanned_files,
             "skipped_files": self.skipped_files,
             "total_components": len(self.components),

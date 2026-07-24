@@ -22,6 +22,11 @@ inputs:
     required: false
     default: "ai-stack-report.json"
 
+  scanner-mode:
+    description: Inventory scanner mode for stack reports. Use static, llm, or hybrid.
+    required: false
+    default: "static"
+
   quality-output:
     description: AI quality gate Markdown report path.
     required: false
@@ -86,8 +91,10 @@ runs:
         SCAN_PATH: ${{ inputs.path }}
         MARKDOWN_OUTPUT: ${{ inputs.markdown-output }}
         JSON_OUTPUT: ${{ inputs.json-output }}
+        SCANNER_MODE: ${{ inputs.scanner-mode }}
         INPUT_LLM_API_KEY: ${{ inputs.llm-api-key }}
         AI_STACK_USE_LLM: ${{ inputs.enrich }}
+        AI_STACK_SCANNER_MODE: ${{ inputs.scanner-mode }}
         AI_STACK_LLM_BASE_URL: ${{ inputs.llm-base-url }}
         AI_STACK_LLM_MODEL: ${{ inputs.llm-model }}
         AI_STACK_ENV_FILE: ""
@@ -95,8 +102,11 @@ runs:
         if [ -n "$INPUT_LLM_API_KEY" ]; then
           export AI_STACK_LLM_API_KEY="$INPUT_LLM_API_KEY"
         fi
-        ai-stack-scan --path "$SCAN_PATH" --format markdown --output "$MARKDOWN_OUTPUT"
-        ai-stack-scan --path "$SCAN_PATH" --format json --output "$JSON_OUTPUT"
+        args=(--path "$SCAN_PATH" --scanner-mode "$SCANNER_MODE" --markdown-output "$MARKDOWN_OUTPUT" --json-output "$JSON_OUTPUT")
+        if [ "$AI_STACK_USE_LLM" = "true" ]; then
+          args+=(--enrich)
+        fi
+        ai-stack-scan "${args[@]}"
 
     - name: Run AI quality gate
       if: ${{ inputs.mode == 'review' || inputs.mode == 'both' }}
