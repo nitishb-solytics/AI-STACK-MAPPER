@@ -1,0 +1,76 @@
+# --------------------------------------------------
+# Python
+# --------------------------------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# --------------------------------------------------
+# VS Code Extension (Node.js)
+# --------------------------------------------------
+
+# Dependencies
+extension/node_modules/
+
+# Compiled output
+extension/out/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --------------------------------------------------
+# IDE
+# --------------------------------------------------
+
+.vscode/
+extension/.vscode/
+
+.idea/
+
+# --------------------------------------------------
+# OS Files
+# --------------------------------------------------
+
+.DS_Store
+Thumbs.db
+
+# --------------------------------------------------
+# GitHub Actions artifacts
+# --------------------------------------------------
+
+AI_STACK.md
+ai-stack-report.json
+
+# --------------------------------------------------
+# Misc
+# --------------------------------------------------
+
+*.log

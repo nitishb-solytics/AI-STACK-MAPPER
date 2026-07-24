@@ -1,0 +1,102 @@
+{
+  "name": "ai-stack-mapper",
+  "displayName": "AI Stack Mapper",
+  "description": "Map every LLM, MCP server, Tool and Agent framework used across your codebase.",
+  "version": "0.1.0",
+  "publisher": "local-dev",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other", "Visualization"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "aiStackMapper.scan",
+        "title": "AI Stack: Scan Workspace",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "aiStackMapper.exportMarkdown",
+        "title": "AI Stack: Export Markdown Report"
+      },
+      {
+        "command": "aiStackMapper.setLlmApiKey",
+        "title": "AI Stack: Set LLM API Key (for optional AI enrichment)"
+      },
+      {
+        "command": "aiStackMapper.clearLlmApiKey",
+        "title": "AI Stack: Clear LLM API Key"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aiStackMapper",
+          "title": "AI Stack",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "aiStackMapper": [
+        {
+          "id": "aiStackMapperView",
+          "name": "Components"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "aiStackMapper.scan",
+          "when": "view == aiStackMapperView",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "AI Stack Mapper",
+      "properties": {
+        "aiStackMapper.pythonPath": {
+          "type": "string",
+          "default": "python3",
+          "description": "Path to the Python 3 interpreter used to run the scanner (must be 3.8+)."
+        },
+        "aiStackMapper.scanOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically re-scan (debounced) when a relevant file is saved."
+        },
+        "aiStackMapper.enrichWithLLM": {
+          "type": "boolean",
+          "default": false,
+          "description": "Optional: ask an LLM to infer each component's likely purpose/usage/expected output. OFF by default. Requires an API key set via 'AI Stack: Set LLM API Key'. Sends only code-derived context (file:line, enclosing function/class name + docstring, prompt text) to the configured LLM endpoint -- never full source files or secret values."
+        },
+        "aiStackMapper.llmBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI-compatible chat-completions base URL for AI enrichment (default: https://api.openai.com/v1). Point this at a self-hosted/on-prem endpoint (vLLM, Ollama, internal Azure OpenAI, LiteLLM proxy) to avoid sending code context to a public cloud LLM."
+        },
+        "aiStackMapper.llmModel": {
+          "type": "string",
+          "default": "gpt-4o-mini",
+          "description": "Model name to request for AI enrichment."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.5"
+  }
+}

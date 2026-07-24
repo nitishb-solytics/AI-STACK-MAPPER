@@ -1,0 +1,61 @@
+name: Test AI Stack Mapper
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-action:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout AI Stack Mapper
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run local AI Stack Mapper action
+        uses: ./
+        with:
+          path: sample_project
+          markdown-output: AI_STACK.md
+          json-output: ai-stack-report.json
+          enrich: "false"
+
+      - name: Validate generated reports
+        shell: bash
+        run: |
+          test -s AI_STACK.md
+          test -s ai-stack-report.json
+          python -m json.tool ai-stack-report.json > /dev/null
+
+      - name: Show report summary
+        shell: bash
+        run: |
+          echo "Markdown report:"
+          head -n 20 AI_STACK.md
+
+          echo
+          echo "JSON report generated successfully."
+
+      - name: Upload test reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-stack-mapper-test-reports
+          path: |
+            AI_STACK.md
+            ai-stack-report.json
+          if-no-files-found: error

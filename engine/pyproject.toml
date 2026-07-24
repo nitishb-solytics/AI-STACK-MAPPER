@@ -1,0 +1,17 @@
+[project]
+name = "ai-stack-scanner"
+version = "0.1.0"
+description = "Static scanner that maps LLM, MCP, Tool and Agent-framework usage across a Python codebase."
+requires-python = ">=3.8"
+dependencies = []
+
+[project.scripts]
+ai-stack-scan = "ai_stack_scanner.cli:main"
+ai-stack-review = "ai_stack_scanner.review_cli:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["ai_stack_scanner"]
