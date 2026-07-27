@@ -1,175 +1,393 @@
 # AI Stack Mapper
 
-Scans a Python codebase and gives you a structured map of every **LLM
-provider, MCP server/client, Tool definition, and Agent/orchestration
-framework** it uses — as a VS Code sidebar, and as a report that
-auto-updates on every push via GitHub Actions.
+AI Stack Mapper scans a Python repository and generates a structured inventory
+of the AI stack used in that codebase.
 
-## How it's put together
+It identifies:
 
+- LLM providers and model clients
+- Agent/orchestration frameworks
+- Tool/function-calling definitions
+- MCP servers/clients/configuration
+- Vector stores and memory layers
+- Model-name literals and AI-related dependency/config signals
+
+The output is generated as:
+
+- `AI_STACK.md` - human-readable Markdown report
+- `ai-stack-report.json` - structured machine-readable report
+- optional `ai-quality-report.md/json` - PR quality-gate report
+
+The same engine can be used locally, from the VS Code extension, or inside
+GitHub Actions.
+
+## Why this tool exists
+
+Modern Python repos often use LLMs, agents, vector databases, prompt chains,
+MCP servers, and framework wrappers across many files. It becomes difficult to
+answer simple questions like:
+
+- Which LLM providers are used?
+- Which agent frameworks are used?
+- Where are tools or MCP servers registered?
+- Which vector stores or memory layers are present?
+- Is this usage coming from real code, dependency files, config files, or LLM
+  discovery?
+- Can the report also explain the likely purpose, usage, and output of each
+  model/component?
+
+AI Stack Mapper is built to answer those questions in CI and local developer
+workflows.
+
+## Detection modes
+
+The inventory scanner supports three modes.
+
+| Mode | Uses LLM? | Description | Recommended use |
+|---|---:|---|---|
+| `static` | No | Deterministic Python AST + dependency/config scan. | Default and safest mode. |
+| `llm` | Yes | LLM-only semantic discovery from small redacted snippets and config evidence. | Experiments or semantic discovery checks. |
+| `hybrid` | Yes | Runs static scan first, then adds LLM-discovered findings into the same report. | Best coverage when an API key is available. |
+
+Default mode is:
+
+```yaml
+scanner-mode: "static"
 ```
-engine/       Python detection engine (stdlib-only, no dependencies).
-              Real static analysis via the `ast` module, plus scanning of
-              requirements.txt/pyproject.toml, mcp.json / claude_desktop_
-              config.json, and .env KEY NAMES (never values).
 
-extension/    VS Code extension (TypeScript). Spawns a bundled copy of the
-              engine as a subprocess and renders results as a tree view:
-              Category -> Component -> file:line occurrences (click to jump).
+So by default the tool does not call any LLM.
 
-.github/      GitHub Action that re-runs the same engine on every push and
-workflows/    commits AI_STACK.md + ai-stack-report.json back to the repo.
+To use an LLM, the repo owner must explicitly configure:
 
-sample_project/  A small worked example (OpenAI + Anthropic clients,
-              LangChain @tool, an MCP FastMCP server, a CrewAI dependency,
-              mcp.json config) you can point the scanner at to see it work.
+```yaml
+scanner-mode: "hybrid"
+llm-api-key: ${{ secrets.AI_STACK_LLM_API_KEY }}
+llm-base-url: "https://openrouter.ai/api/v1"
+llm-model: "google/gemma-4-26b-a4b-it:free"
 ```
 
-One engine, two consumers (extension + CI) — so the detection logic only
-lives in one place and stays in sync between "what I see in VS Code" and
-"what's recorded in the repo."
+If `scanner-mode` is `llm` or `hybrid` but no API key is configured, the
+scanner safely falls back to static mode and still produces a report.
 
-## What it detects, and how confidently
+## Static scanner
+
+The static scanner does not execute project code. It reads files and uses
+deterministic rules.
+
+It scans:
+
+- Python source files with Python `ast`
+- `requirements.txt`
+- `pyproject.toml`
+- `Pipfile`
+- `package.json`
+- MCP config files such as `mcp.json`, `.mcp.json`,
+  `claude_desktop_config.json`
+- `.env` / `.env.example` key names only, never secret values
+
+Static detections include:
 
 | Signal | Example | Confidence |
 |---|---|---|
-| Direct instantiation | `client = OpenAI()`, `mcp = FastMCP("x")` | high |
-| Import | `from anthropic import Anthropic` | high |
-| Decorator | `@tool`, `@mcp.tool()` (correctly told apart) | high |
-| Class subclassing | `class MyTool(BaseTool):` | high |
-| Declared dependency | `openai>=1.30` in requirements.txt | medium |
-| MCP config entry | `mcpServers` block in mcp.json | medium |
-| Env var name present | `ANTHROPIC_API_KEY=` in .env.example | low |
-| Bare model-name string | `"gpt-4o"`, `"claude-opus-4-1"` | low |
+| Import | `from openai import OpenAI` | high |
+| Instantiation | `ChatOpenAI(...)`, `Agent(...)`, `FastMCP(...)` | high/medium |
+| Decorator | `@tool`, `@mcp.tool()` | high |
+| Base class | `class MyTool(BaseTool)` | high |
+| Dependency | `crewai`, `openai`, `langchain` in dependency files | medium |
+| MCP config | `mcpServers` block in config JSON | medium |
+| Env key name | `OPENAI_API_KEY=` | low |
+| Model literal | `"gpt-4o"`, `"claude-..."`, `"gemini-..."` | low |
 
-Every finding carries file + line number and a confidence level, so the
-extension/report can be filtered down to "only things I'm sure about" if
-the low-confidence heuristics get noisy in a large repo.
+Static mode is fast, reproducible, and safe for private repos, but it can miss
+custom/dynamic code patterns that do not match known imports/classes/packages.
 
-This is static analysis, not a type checker — it will miss fully dynamic
-patterns (tools assembled from a runtime dict of callables, etc.) and can
-occasionally mistag an unrelated class literally named `Agent`. Treat it as
-a fast, high-recall map to jump off from, not a certified inventory.
+## LLM scanner / semantic discovery
 
-## Scanner modes for stack inventory
-
-The stack inventory scanner can run in three modes:
-
-| Mode | What it does | When to use |
-|---|---|---|
-| `static` | Uses deterministic Python AST scanning plus dependency/config scanning. No LLM call. | Default, safest for CI and private repos. |
-| `llm` | Uses an OpenAI-compatible LLM to discover AI stack components from small redacted snippets and dependency/config evidence. | When you want semantic discovery for custom agents/tools that static rules may miss. |
-| `hybrid` | Runs static first, then adds LLM-discovered components into the same report. | Recommended when an API key is available and you want better coverage. |
-
-`enrich: true` is separate. It does not control discovery mode. It asks the
-LLM to add short explanatory context to components that were already found.
-
-So the clean mental model is:
-
-- `scanner-mode` = how components are detected.
-- `enrich` = whether detected components get AI-generated descriptions.
-
-If `scanner-mode` is `llm` or `hybrid` but no API key is configured, the
-scanner falls back to `static` so the workflow still produces a report.
-
-## 1. Run the engine standalone
-
-No dependencies beyond Python 3.8+:
-
-```bash
-cd engine
-pip install -e .          # installs the `ai-stack-scan` command
-ai-stack-scan --path ../sample_project --format markdown
-ai-stack-scan --path ../sample_project --format json --output report.json
-ai-stack-scan --path ../sample_project --scanner-mode static --markdown-output AI_STACK.md --json-output ai-stack-report.json
-ai-stack-scan --path ../sample_project --scanner-mode hybrid --llm-api-key "$AI_STACK_LLM_API_KEY" --markdown-output AI_STACK.md --json-output ai-stack-report.json
-ai-stack-review --path ../sample_project --format markdown --output ai-quality-report.md --no-fail
-ai-stack-review --path ../sample_project --format markdown --output ai-quality-report.md --fail-on high
-```
-
-`ai-stack-review` is the CI quality-gate command. It reports prompt, LLM-call,
-TextToSQL, and agent/RAG implementation findings, then exits with code `1`
-when a finding meets or exceeds `--fail-on`.
-
-Or without installing, straight from source:
-
-```bash
-cd engine
-PYTHONPATH=. python3 -m ai_stack_scanner.cli --path ../sample_project --format markdown
-PYTHONPATH=. python3 -m ai_stack_scanner.review_cli --path ../sample_project --no-fail
-```
-
-## 2. Run the VS Code extension
-
-```bash
-cd extension
-npm install
-npm run compile
-```
-
-Then open the `extension/` folder in VS Code and press **F5** — this opens
-an Extension Development Host window. Open your Python repo there, click
-the new "AI Stack" icon in the Activity Bar, and run **AI Stack: Scan
-Workspace** from the command palette (it also runs automatically on
-activation and, if `aiStackMapper.scanOnSave` is on, after saving a
-relevant file).
-
-If `python3` isn't on your PATH under that name, set
-`aiStackMapper.pythonPath` in Settings.
-
-To ship it as an installable `.vsix`:
-
-```bash
-npm install -g @vscode/vsce
-cd extension
-vsce package
-```
-
-That produces `ai-stack-mapper-0.1.0.vsix`, installable via **Extensions:
-Install from VSIX...** in VS Code.
-
-## 3. Use as a GitHub Action
-
-This repo includes `action.yml`, so after pushing `AI-STACK-MAPPER` to its
-own GitHub repository, other repositories can call it as a reusable action.
-Keep this project separate from the repositories it scans.
-
-Example workflow for DocSearch:
+The optional LLM scanner is used when:
 
 ```yaml
-name: AI Quality Gate
+scanner-mode: "llm"
+```
+
+or:
+
+```yaml
+scanner-mode: "hybrid"
+```
+
+This is not an autonomous multi-step agent. It is an LLM-assisted semantic
+discovery layer. It sends bounded, redacted evidence to an OpenAI-compatible
+LLM and asks it to identify AI stack components that static rules may miss.
+
+The LLM receives limited evidence such as:
+
+- snippets around likely agent/tool/LLM/vector-store code
+- dependency/config summaries
+- repo description or package metadata
+- `.env` key names only
+
+It should not receive full source files or secret values.
+
+LLM-discovered findings are marked in JSON as:
+
+```json
+"match_type": "llm_discovery"
+```
+
+Example:
+
+```json
+{
+  "file": "pyproject.toml",
+  "line": 1,
+  "match_type": "llm_discovery",
+  "confidence": "high",
+  "detail": "The repository description explicitly identifies CrewAI as a framework for orchestrating autonomous AI agents."
+}
+```
+
+This allows the report consumer to distinguish deterministic static findings
+from LLM-predicted findings.
+
+## Optional LLM enrichment
+
+LLM enrichment is separate from LLM discovery.
+
+Discovery answers:
+
+```text
+What AI components are present?
+```
+
+Enrichment answers:
+
+```text
+For each detected component, what does it appear to be used for?
+```
+
+Enable enrichment with:
+
+```yaml
+enrich: "true"
+```
+
+When enabled, the scanner asks the configured LLM to infer textual attributes
+for each detected component.
+
+Current enrichment fields:
+
+| Field | Meaning |
+|---|---|
+| `purpose` | Why this model/component appears to exist in the codebase. |
+| `usage_description` | How the code appears to use it. |
+| `expected_output` | What output/response it likely produces. |
+| `model` | LLM model used to generate the enrichment. |
+
+These map to lead/client-friendly labels:
+
+| Lead-facing label | JSON field |
+|---|---|
+| Model Purpose | `ai_enrichment.purpose` |
+| Model Usage Description | `ai_enrichment.usage_description` |
+| Model Output | `ai_enrichment.expected_output` |
+
+Example JSON shape:
+
+```json
+{
+  "category": "LLM",
+  "name": "OpenAI chat model",
+  "confidence": "high",
+  "ai_enrichment": {
+    "purpose": "Used to answer user questions from retrieved document context.",
+    "usage_description": "The model is called from the query pipeline after retrieval.",
+    "expected_output": "Natural-language answer text.",
+    "model": "google/gemma-4-26b-a4b-it:free"
+  }
+}
+```
+
+Important: enrichment is probabilistic and should be treated as an
+LLM-generated suggestion for human review, not as a deterministic fact.
+
+## Hybrid mode vs static mode
+
+Static mode is best when you want deterministic, no-network, low-risk scanning.
+
+Hybrid mode is useful when you want better coverage.
+
+Hybrid can help identify:
+
+- custom agent classes not using a known framework
+- internal wrappers around LLM clients
+- workflow/planner/orchestrator code
+- new AI libraries not yet added to the static registry
+- semantic use cases visible from descriptions, prompts, or file structure
+- extra textual context that static rules cannot infer
+
+Recommended production setup:
+
+```yaml
+scanner-mode: "hybrid"
+enrich: "true"
+```
+
+Use `hybrid` when an API key is available and the repo owner is comfortable
+sending bounded, redacted code evidence to the configured LLM endpoint.
+
+Use `static` when the repo must avoid all outbound LLM calls.
+
+## Match types
+
+Each occurrence in `ai-stack-report.json` contains a `match_type` field.
+
+| `match_type` | Meaning | Source |
+|---|---|---|
+| `import` | Found from Python import statements. | Static AST |
+| `instantiation` | Found from constructor/client/model creation. | Static AST |
+| `decorator` | Found from decorators such as `@tool` or `@mcp.tool()`. | Static AST |
+| `base_class` | Found from class inheritance. | Static AST |
+| `usage` | Found from usage of a known client with visible prompt/message text. | Static AST |
+| `dependency` | Found from dependency files. | Static config scan |
+| `config` | Found from MCP/config files. | Static config scan |
+| `env_var` | Found from environment variable key names only. | Static env scan |
+| `literal` | Found from model-name string literals. | Static heuristic |
+| `llm_discovery` | Found by optional LLM semantic discovery. | LLM scanner |
+
+This makes it clear whether a finding was deterministic or LLM-assisted.
+
+## AI quality gate
+
+AI Stack Mapper also includes an optional quality-gate command:
+
+```bash
+ai-stack-review
+```
+
+It can run on changed Python files in a pull request and produce:
+
+- `ai-quality-report.md`
+- `ai-quality-report.json`
+
+It supports:
+
+- static quality rules
+- optional LLM review
+- severity threshold for failing CI
+
+Example:
+
+```yaml
+mode: "review"
+changed-only: "true"
+base-ref: ${{ github.base_ref }}
+fail-on: "high"
+llm-review: "true"
+```
+
+If a finding is at or above the configured threshold, the action exits with a
+non-zero status and can block merge when configured as a required GitHub check.
+
+## GitHub Action usage
+
+Example workflow for stack inventory and PR quality gate:
+
+```yaml
+name: AI Stack Scan and Quality Gate
 
 on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "AI_STACK.md"
+      - "ai-stack-report.json"
+      - "ai-quality-report.md"
+      - "ai-quality-report.json"
+
   pull_request:
-    branches: [india-dev-revamp]
+    branches:
+      - main
+
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: read
 
 jobs:
-  ai-quality-gate:
+  update-stack-report:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Run AI Stack Mapper
-        uses: YOUR-GITHUB-USER/ai-stack-mapper@v1
-        env:
-          AI_STACK_USE_LLM: "true"
-          AI_STACK_LLM_API_KEY: ${{ secrets.AI_STACK_LLM_API_KEY }}
+      - name: Run AI Stack Mapper scan
+        uses: nitishb-solytics/AI-STACK-MAPPER@main
         with:
           path: "."
-          mode: "both"
+          mode: "scan"
           scanner-mode: "hybrid"
-          enrich: "false"
+          enrich: "true"
+          llm-api-key: ${{ secrets.AI_STACK_LLM_API_KEY }}
+          llm-base-url: "https://openrouter.ai/api/v1"
+          llm-model: "google/gemma-4-26b-a4b-it:free"
+          markdown-output: "AI_STACK.md"
+          json-output: "ai-stack-report.json"
+
+      - name: Validate stack reports
+        shell: bash
+        run: |
+          test -s AI_STACK.md
+          test -s ai-stack-report.json
+          python -m json.tool ai-stack-report.json > /dev/null
+
+      - name: Commit updated stack reports
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add AI_STACK.md ai-stack-report.json
+          if git diff --cached --quiet; then
+            echo "No AI stack changes detected."
+            exit 0
+          fi
+          git commit -m "chore: update AI stack report"
+          git push
+
+  ai-quality-gate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run AI quality gate
+        uses: nitishb-solytics/AI-STACK-MAPPER@main
+        with:
+          path: "."
+          mode: "review"
           changed-only: "true"
           base-ref: ${{ github.base_ref }}
           fail-on: "high"
@@ -177,69 +395,159 @@ jobs:
           llm-api-key: ${{ secrets.AI_STACK_LLM_API_KEY }}
           llm-base-url: "https://openrouter.ai/api/v1"
           llm-model: "google/gemma-4-26b-a4b-it:free"
+          quality-output: "ai-quality-report.md"
+          quality-json-output: "ai-quality-report.json"
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload quality report
         if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: ai-stack-reports
+          name: ai-quality-report
           path: |
-            AI_STACK.md
-            ai-stack-report.json
             ai-quality-report.md
             ai-quality-report.json
           if-no-files-found: error
 ```
 
-To actually block merges, add this workflow as a required status check in the
-DocSearch branch protection rule. The action fails when `ai-stack-review`
-finds issues at or above the selected threshold.
+## Local usage
 
-LLM usage is optional and split by job:
+Install the engine:
 
-- Stack inventory: `scanner-mode: "static"` is fully static. Use
-  `scanner-mode: "llm"` for LLM-only discovery, or `"hybrid"` for static +
-  LLM discovery.
-- Stack inventory enrichment: `enrich: "true"` adds AI-generated context to
-  already detected components.
-- Quality gate: `llm-review: "true"` adds LLM review findings to the static
-  quality rules, then applies the same `fail-on` threshold.
+```bash
+cd engine
+pip install -e .
+```
 
-For a strict rollout, use `fail-on: "medium"`. For a safer first rollout,
-keep `fail-on: "high"` and review the uploaded report artifacts before
-tightening the threshold.
+Static scan:
 
-## Legacy copy-into-repo workflow
+```bash
+ai-stack-scan --path . --scanner-mode static --markdown-output AI_STACK.md --json-output ai-stack-report.json
+```
 
-`.github/workflows/ai-stack-scan.yml` runs on every push to `main` (edit
-the `branches:` list for your workflow), installs the engine, and commits
-`AI_STACK.md` + `ai-stack-report.json` back to the repo — so there's always
-a current, version-controlled, diffable log of the AI stack in use. Copy
-the `engine/` folder and the workflow file into your actual repo for this
-to work (paths in the workflow assume `engine/` sits at the repo root).
+Hybrid scan with LLM discovery:
 
-If you'd rather not commit directly to a protected branch, swap the last
-step for opening a PR instead (e.g. `peter-evans/create-pull-request`), or
-switch the trigger to `pull_request` and post the Markdown as a PR comment.
+```bash
+ai-stack-scan --path . \
+  --scanner-mode hybrid \
+  --llm-api-key "$AI_STACK_LLM_API_KEY" \
+  --llm-base-url "https://openrouter.ai/api/v1" \
+  --llm-model "google/gemma-4-26b-a4b-it:free" \
+  --markdown-output AI_STACK.md \
+  --json-output ai-stack-report.json
+```
 
-## Extending detection
+Hybrid scan with LLM discovery plus enrichment:
 
-Everything the scanner recognizes lives in `engine/ai_stack_scanner/
-registry.py` as plain dictionaries — no need to touch the AST-walking code:
+```bash
+ai-stack-scan --path . \
+  --scanner-mode hybrid \
+  --enrich \
+  --llm-api-key "$AI_STACK_LLM_API_KEY" \
+  --llm-base-url "https://openrouter.ai/api/v1" \
+  --llm-model "google/gemma-4-26b-a4b-it:free" \
+  --markdown-output AI_STACK.md \
+  --json-output ai-stack-report.json
+```
 
-- `PACKAGE_REGISTRY` — new SDK to recognize by import → add one line.
-- `CONSTRUCTOR_REGISTRY` — new "this call means X" signal → add one line.
-- `BASE_CLASS_REGISTRY` — new base class to flag on subclassing.
-- `MODEL_NAME_PATTERNS` — new model-name regex fallback.
+Quality gate:
 
-## Known limitations / next steps
+```bash
+ai-stack-review --path . --fail-on high --markdown-output ai-quality-report.md --json-output ai-quality-report.json
+```
 
-- Python only, by design (per your codebase). The same engine/extension
-  pattern extends to JS/TS via `@typescript-eslint/typescript-estree` if
-  you later need polyglot support — worth a separate pass since the AST
-  shapes differ.
-- No caching/incremental scanning yet — every scan walks the whole tree.
-  Fine for most repos; for very large monorepos you'd want to cache by
-  file mtime/hash.
-- The tree view is list-based, not a visual graph. A webview with a
-  force-directed graph (e.g. showing which agent calls which tool calls
-  which MCP server) is a natural v2 if the flat list stops being enough.
+Quality gate with LLM review:
+
+```bash
+ai-stack-review --path . \
+  --fail-on high \
+  --llm-review \
+  --llm-api-key "$AI_STACK_LLM_API_KEY" \
+  --llm-base-url "https://openrouter.ai/api/v1" \
+  --llm-model "google/gemma-4-26b-a4b-it:free" \
+  --markdown-output ai-quality-report.md \
+  --json-output ai-quality-report.json
+```
+
+## VS Code extension
+
+The VS Code extension uses the same Python engine and currently runs safely in
+static mode by default.
+
+Current extension behavior:
+
+```text
+VS Code Extension -> ai-stack-scan -> static scan
+```
+
+The engine already supports `llm` and `hybrid` modes. To expose those in the
+extension UI, extension settings can be added later for:
+
+- scanner mode
+- LLM base URL
+- LLM model
+- LLM API key/secret handling
+- enrichment enable/disable
+
+## How to explain the LLM part to leads
+
+Short answer:
+
+```text
+Yes, LLM usage is supported, but it is optional.
+By default the scanner is static. If enabled, the LLM is used for semantic
+discovery and enrichment.
+```
+
+More detailed answer:
+
+```text
+AI Stack Mapper has a deterministic static scanner and an optional LLM-assisted
+scanner.
+
+The static scanner finds known packages, imports, constructors, decorators,
+model literals, vector stores, MCP config, and dependency signals.
+
+The optional LLM scanner can identify semantic/custom agent or model usage that
+static rules may miss. LLM-discovered findings are marked as match_type =
+llm_discovery.
+
+The optional enrichment step can predict textual attributes such as Model
+Purpose, Model Usage Description, and Model Output. These are added under the
+ai_enrichment field and should be reviewed as suggestions.
+```
+
+## Privacy and safety
+
+- Static mode makes no LLM/API calls.
+- LLM mode and hybrid mode require explicit configuration.
+- Secrets should be passed through GitHub Secrets, not committed in `.env`.
+- `.env` files in target repos are scanned by key name only, not value.
+- LLM discovery uses bounded/redacted evidence, not full raw repository dumps.
+- LLM-generated fields are marked separately and should be treated as
+  suggestions.
+
+## Extending static detection
+
+Static detection rules live in:
+
+```text
+engine/ai_stack_scanner/registry.py
+```
+
+To add support for a new SDK/framework, update:
+
+- `PACKAGE_REGISTRY`
+- `CONSTRUCTOR_REGISTRY`
+- `BASE_CLASS_REGISTRY`
+- `MODEL_NAME_PATTERNS`
+- JS/package fallback registries if package.json support is needed
+
+## Known limitations
+
+- The main AST scanner is focused on Python repositories.
+- `package.json` is scanned as dependency/config evidence only; JS/TS AST
+  scanning is not currently implemented.
+- LLM discovery and enrichment are probabilistic.
+- LLM-only mode can return no results if the model/API is rate-limited.
+  Production CI should prefer `hybrid`.
+- Very dynamic runtime patterns may still need manual review.
