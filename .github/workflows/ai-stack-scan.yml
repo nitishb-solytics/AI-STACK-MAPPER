@@ -106,3 +106,48 @@ jobs:
             AI_RISK_REPORT.md
             ai-risk-report.json
           if-no-files-found: error
+
+  test-both-action:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout AI Stack Mapper
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run local stack and risk scanner action
+        uses: ./
+        with:
+          path: sample_project
+          mode: both
+          markdown-output: AI_STACK.md
+          json-output: ai-stack-report.json
+          risk-output: AI_RISK_REPORT.md
+          risk-json-output: ai-risk-report.json
+          risk-no-fail: "true"
+          enrich: "false"
+
+      - name: Validate generated stack and risk reports
+        shell: bash
+        run: |
+          test -s AI_STACK.md
+          test -s ai-stack-report.json
+          test -s AI_RISK_REPORT.md
+          test -s ai-risk-report.json
+          python -m json.tool ai-stack-report.json > /dev/null
+          python -m json.tool ai-risk-report.json > /dev/null
+
+      - name: Upload combined test reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-stack-and-risk-test-reports
+          path: |
+            AI_STACK.md
+            ai-stack-report.json
+            AI_RISK_REPORT.md
+            ai-risk-report.json
+          if-no-files-found: error
