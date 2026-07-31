@@ -144,6 +144,8 @@ class RiskLLMConfig:
     api_key: str = ""
     model: str = DEFAULT_LLM_MODEL
     timeout: int = LLM_REQUEST_TIMEOUT_SECONDS
+    max_control_findings: int = MAX_LLM_CONTROL_FINDINGS
+    min_control_severity: str = "high"
 
 
 def scan_risks(
@@ -177,6 +179,8 @@ def scan_risks(
         findings.extend(_review_file(rel, source))
         if _is_llm_risk_control_candidate(rel, source):
             reviewed_sources.append((rel, source))
+
+    findings.sort(key=lambda f: (-SEVERITY_ORDER.get(f.severity, 0), f.file, f.line, f.rule_id))
 
     llm_warnings: List[str] = []
     if llm_config is not None:
@@ -692,7 +696,7 @@ def _enrich_findings_with_llm_controls(
     if not static_findings:
         return []
 
-    evidence, indexed_findings = _build_llm_control_evidence(source_by_rel, static_findings)
+    evidence, indexed_findings = _build_llm_control_evidence(source_by_rel, static_findings, config)
     if not indexed_findings:
         return ["LLM control enrichment skipped because no code snapshots were available."]
     try:
@@ -893,10 +897,19 @@ def _scope_has_trim_or_limit(scope_stack: Sequence[str], source: str) -> bool:
 def _build_llm_control_evidence(
     source_by_rel: Dict[str, str],
     static_findings: Sequence[RiskFinding],
+    config: RiskLLMConfig,
 ) -> Tuple[str, List[Tuple[int, RiskFinding]]]:
     blocks = []
     indexed_findings: List[Tuple[int, RiskFinding]] = []
-    for index, finding in enumerate(static_findings[:MAX_LLM_CONTROL_FINDINGS], start=1):
+    min_severity_rank = SEVERITY_ORDER.get(config.min_control_severity, SEVERITY_ORDER["high"])
+    max_findings = max(1, config.max_control_findings)
+    eligible_findings = [
+        finding
+        for finding in static_findings
+        if SEVERITY_ORDER.get(finding.severity, 0) >= min_severity_rank
+    ][:max_findings]
+
+    for index, finding in enumerate(eligible_findings, start=1):
         source = source_by_rel.get(finding.file)
         if source is None:
             source = source_by_rel.get(finding.file.replace("/", os.sep))

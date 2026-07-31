@@ -72,6 +72,16 @@ inputs:
     required: false
     default: "false"
 
+  risk-llm-max-findings:
+    description: Maximum number of risk findings to send to the LLM for control generation.
+    required: false
+    default: "25"
+
+  risk-llm-min-severity:
+    description: Minimum risk severity sent to the LLM for control generation. Use info, low, medium, high, or critical.
+    required: false
+    default: "high"
+
   llm-api-key:
     description: API key for optional LLM features. Pass with a GitHub Actions secret.
     required: false
@@ -131,8 +141,12 @@ runs:
         FAIL_ON: ${{ inputs.fail-on }}
         RISK_NO_FAIL: ${{ inputs.risk-no-fail }}
         LLM_RISK_CONTROL: ${{ inputs.llm-risk-control }}
+        RISK_LLM_MAX_FINDINGS: ${{ inputs.risk-llm-max-findings }}
+        RISK_LLM_MIN_SEVERITY: ${{ inputs.risk-llm-min-severity }}
         INPUT_LLM_API_KEY: ${{ inputs.llm-api-key }}
         AI_STACK_USE_LLM: ${{ inputs.llm-risk-control }}
+        AI_STACK_RISK_LLM_MAX_FINDINGS: ${{ inputs.risk-llm-max-findings }}
+        AI_STACK_RISK_LLM_MIN_SEVERITY: ${{ inputs.risk-llm-min-severity }}
         AI_STACK_LLM_BASE_URL: ${{ inputs.llm-base-url }}
         AI_STACK_LLM_MODEL: ${{ inputs.llm-model }}
         AI_STACK_ENV_FILE: ""
@@ -155,5 +169,7 @@ runs:
         fi
         if [ "$LLM_RISK_CONTROL" = "true" ]; then
           args+=(--llm-risk-control)
+          args+=(--risk-llm-max-findings "$RISK_LLM_MAX_FINDINGS")
+          args+=(--risk-llm-min-severity "$RISK_LLM_MIN_SEVERITY")
         fi
         ai-risk-scan "${args[@]}"

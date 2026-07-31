@@ -45,6 +45,18 @@ def main(argv=None) -> int:
         help="Enable optional LLM-generated risk controls. Also enabled by AI_STACK_USE_LLM=true.",
     )
     parser.add_argument(
+        "--risk-llm-max-findings",
+        type=int,
+        default=int(os.environ.get("AI_STACK_RISK_LLM_MAX_FINDINGS", "25")),
+        help="Maximum number of risk findings to send to the LLM for control generation.",
+    )
+    parser.add_argument(
+        "--risk-llm-min-severity",
+        choices=sorted(SEVERITY_ORDER, key=lambda s: SEVERITY_ORDER[s]),
+        default=os.environ.get("AI_STACK_RISK_LLM_MIN_SEVERITY", "high"),
+        help="Minimum severity sent to the LLM for control generation.",
+    )
+    parser.add_argument(
         "--llm-base-url",
         default=os.environ.get("AI_STACK_LLM_BASE_URL", DEFAULT_LLM_BASE_URL),
         help="OpenAI-compatible chat-completions base URL.",
@@ -68,6 +80,8 @@ def main(argv=None) -> int:
             base_url=args.llm_base_url or DEFAULT_LLM_BASE_URL,
             api_key=args.llm_api_key,
             model=args.llm_model or DEFAULT_LLM_MODEL,
+            max_control_findings=max(1, args.risk_llm_max_findings),
+            min_control_severity=args.risk_llm_min_severity,
         )
         if not llm_config.api_key:
             print(
@@ -78,7 +92,9 @@ def main(argv=None) -> int:
             llm_config = None
         else:
             print(
-                f"LLM risk controls enabled (model: {llm_config.model}, endpoint: {llm_config.base_url}).",
+                f"LLM risk controls enabled (model: {llm_config.model}, endpoint: {llm_config.base_url}, "
+                f"max_findings: {llm_config.max_control_findings}, "
+                f"min_severity: {llm_config.min_control_severity}).",
                 file=sys.stderr,
             )
 

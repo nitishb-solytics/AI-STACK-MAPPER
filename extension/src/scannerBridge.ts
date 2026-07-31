@@ -186,6 +186,8 @@ export class ScannerBridge {
     const cfg = vscode.workspace.getConfiguration('aiStackMapper');
     const useLlm = cfg.get<boolean>('riskUseLLM', false);
     const failOn = cfg.get<string>('riskFailOn', 'high') || 'high';
+    const riskLlmMaxFindings = Math.max(1, cfg.get<number>('riskLlmMaxFindings', 25) || 25);
+    const riskLlmMinSeverity = cfg.get<string>('riskLlmMinSeverity', 'high') || 'high';
 
     const env: NodeJS.ProcessEnv = { ...process.env };
     const existing = env.PYTHONPATH ? `${env.PYTHONPATH}${path.delimiter}` : '';
@@ -229,6 +231,8 @@ export class ScannerBridge {
         env.AI_STACK_LLM_MODEL = model;
       }
       args.push('--llm-risk-control');
+      args.push('--risk-llm-max-findings', String(riskLlmMaxFindings));
+      args.push('--risk-llm-min-severity', riskLlmMinSeverity);
     }
 
     return new Promise((resolve, reject) => {

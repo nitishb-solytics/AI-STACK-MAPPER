@@ -316,6 +316,8 @@ changed-only: "true"
 base-ref: ${{ github.base_ref }}
 fail-on: "high"
 llm-risk-control: "true"
+risk-llm-max-findings: "25"
+risk-llm-min-severity: "high"
 ```
 
 If a finding is at or above the configured threshold, the action exits with a
@@ -428,6 +430,8 @@ jobs:
           mode: "risk"
           risk-no-fail: "true"
           llm-risk-control: "true"
+          risk-llm-max-findings: "25"
+          risk-llm-min-severity: "high"
           llm-api-key: ${{ secrets.AI_STACK_LLM_API_KEY }}
           llm-base-url: "https://openrouter.ai/api/v1"
           llm-model: "google/gemma-4-26b-a4b-it:free"
@@ -482,6 +486,8 @@ jobs:
           base-ref: ${{ github.base_ref }}
           fail-on: "high"
           llm-risk-control: "true"
+          risk-llm-max-findings: "25"
+          risk-llm-min-severity: "high"
           llm-api-key: ${{ secrets.AI_STACK_LLM_API_KEY }}
           llm-base-url: "https://openrouter.ai/api/v1"
           llm-model: "google/gemma-4-26b-a4b-it:free"
@@ -552,6 +558,8 @@ ai-risk-scan --path . \
   --report-title "AI Risk Report" \
   --fail-on high \
   --llm-risk-control \
+  --risk-llm-max-findings 25 \
+  --risk-llm-min-severity high \
   --llm-api-key "$AI_STACK_LLM_API_KEY" \
   --llm-base-url "https://openrouter.ai/api/v1" \
   --llm-model "google/gemma-4-26b-a4b-it:free" \

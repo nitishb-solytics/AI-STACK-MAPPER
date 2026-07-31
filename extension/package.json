@@ -110,6 +110,18 @@
           "default": "high",
           "enum": ["info", "low", "medium", "high", "critical"],
           "description": "Severity threshold used in the generated AI risk report status."
+        },
+        "aiStackMapper.riskLlmMaxFindings": {
+          "type": "number",
+          "default": 25,
+          "minimum": 1,
+          "description": "Maximum number of code assessment risk findings sent to the LLM for control generation."
+        },
+        "aiStackMapper.riskLlmMinSeverity": {
+          "type": "string",
+          "default": "high",
+          "enum": ["info", "low", "medium", "high", "critical"],
+          "description": "Minimum risk severity sent to the LLM for control generation."
         }
       }
     }
