@@ -1,16 +1,19 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { ScannerBridge, Occurrence, LLM_API_KEY_SECRET } from './scannerBridge';
+import { ScannerBridge, Occurrence, LLM_API_KEY_SECRET, RiskFinding } from './scannerBridge';
 import { AiStackTreeProvider } from './treeViewProvider';
+import { RiskTreeProvider } from './riskTreeViewProvider';
 
 let statusBarItem: vscode.StatusBarItem;
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
   const treeProvider = new AiStackTreeProvider();
+  const riskTreeProvider = new RiskTreeProvider();
   const bridge = new ScannerBridge(context.extensionPath, context.secrets);
 
   context.subscriptions.push(vscode.window.registerTreeDataProvider('aiStackMapperView', treeProvider));
+  context.subscriptions.push(vscode.window.registerTreeDataProvider('aiStackMapperRiskView', riskTreeProvider));
 
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusBarItem.command = 'aiStackMapper.scan';
@@ -40,6 +43,47 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('aiStackMapper.scan', runScan),
+
+    vscode.commands.registerCommand('aiStackMapper.scanRisks', async () => {
+      const folders = vscode.workspace.workspaceFolders;
+      if (!folders || folders.length === 0) {
+        vscode.window.showWarningMessage('AI Risk Scanner: open a folder or workspace first.');
+        return;
+      }
+      const root = folders[0].uri.fsPath;
+      statusBarItem.text = '$(sync~spin) AI Risk: scanning...';
+      statusBarItem.show();
+      try {
+        const result = await bridge.scanRisks(root);
+        riskTreeProvider.setData(result.data);
+        statusBarItem.text = '$(shield) AI Risk: report ready';
+        statusBarItem.tooltip = `Generated ${path.basename(result.markdownPath)} and ${path.basename(result.jsonPath)}.`;
+        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(result.markdownPath));
+        await vscode.window.showTextDocument(doc);
+        vscode.window.showInformationMessage(
+          `AI Risk Scanner: generated ${path.basename(result.markdownPath)} and ${path.basename(result.jsonPath)}.`
+        );
+      } catch (err: any) {
+        riskTreeProvider.setError(err.message);
+        statusBarItem.text = '$(error) AI Risk: scan failed';
+        statusBarItem.tooltip = err.message;
+        vscode.window.showErrorMessage(`AI Risk Scanner: ${err.message}`);
+      }
+    }),
+
+    vscode.commands.registerCommand('aiStackMapper.openRiskFinding', async (root: string, finding: RiskFinding) => {
+      try {
+        const uri = vscode.Uri.file(path.join(root, finding.file));
+        const doc = await vscode.workspace.openTextDocument(uri);
+        const editor = await vscode.window.showTextDocument(doc);
+        const line = Math.max(0, Math.min(finding.line - 1, doc.lineCount - 1));
+        const range = doc.lineAt(line).range;
+        editor.selection = new vscode.Selection(range.start, range.start);
+        editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+      } catch {
+        vscode.window.showWarningMessage(`AI Risk Scanner: could not open ${finding.file}:${finding.line}`);
+      }
+    }),
 
     vscode.commands.registerCommand('aiStackMapper.openOccurrence', async (root: string, occ: Occurrence) => {
       try {
@@ -86,7 +130,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       await context.secrets.store(LLM_API_KEY_SECRET, key);
       vscode.window.showInformationMessage(
-        'AI Stack Mapper: LLM API key saved securely. Enable "aiStackMapper.enrichWithLLM" in Settings to use it, then re-run a scan.'
+        'AI Stack Mapper: LLM API key saved securely. Enable "aiStackMapper.enrichWithLLM" for stack enrichment or "aiStackMapper.riskUseLLM" for risk controls, then re-run a scan.'
       );
     }),
 

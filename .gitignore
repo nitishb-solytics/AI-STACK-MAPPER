@@ -62,15 +62,18 @@ extension/.vscode/
 .DS_Store
 Thumbs.db
 
-# --------------------------------------------------
-# GitHub Actions artifacts
-# --------------------------------------------------
-
+# Generated scanner reports
 AI_STACK.md
 ai-stack-report.json
+AI_RISK_REPORT.md
+ai-risk-report.json
+ai-quality-report.md
+ai-quality-report.json
+reports/
 
-# --------------------------------------------------
-# Misc
-# --------------------------------------------------
+# Local notes / POC docs not meant for repo
+AI_STACK_MAPPER_POC_BRIEF.md
+risk-library/
 
+# Logs
 *.log

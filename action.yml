@@ -1,14 +1,14 @@
 name: AI Stack Mapper
-description: Scan Python repositories for AI stack usage and optionally run an AI quality gate.
+description: Scan Python repositories for AI stack components, code assessment risks, or both.
 
 inputs:
   path:
-    description: Repository directory to scan or review.
+    description: Repository directory to scan.
     required: false
     default: "."
 
   mode:
-    description: scan, review, or both.
+    description: stack, risk, or both.
     required: false
     default: "both"
 
@@ -27,38 +27,48 @@ inputs:
     required: false
     default: "static"
 
-  quality-output:
-    description: AI quality gate Markdown report path.
+  risk-output:
+    description: Code assessment risk Markdown report path.
     required: false
-    default: "ai-quality-report.md"
+    default: "AI_RISK_REPORT.md"
 
-  quality-json-output:
-    description: AI quality gate JSON report path.
+  risk-json-output:
+    description: Code assessment risk JSON report path.
     required: false
-    default: "ai-quality-report.json"
+    default: "ai-risk-report.json"
+
+  risk-report-title:
+    description: Title used in the Markdown/JSON risk report.
+    required: false
+    default: "AI Risk Report"
 
   changed-only:
-    description: Review only changed Python files for quality-gate mode.
+    description: Scan only changed Python files for PR quality-gate/risk mode.
     required: false
     default: "false"
 
   base-ref:
-    description: Base ref for changed-only review mode.
+    description: Base ref for changed-only risk scan mode.
     required: false
     default: ""
 
   fail-on:
-    description: Severity threshold that fails the quality gate.
+    description: Severity threshold that fails the risk scan / PR quality gate.
     required: false
     default: "high"
+
+  risk-no-fail:
+    description: Always exit successfully after writing risk reports.
+    required: false
+    default: "false"
 
   enrich:
     description: Enable optional LLM enrichment for the stack inventory report.
     required: false
     default: "false"
 
-  llm-review:
-    description: Enable optional LLM quality review in addition to static quality rules.
+  llm-risk-control:
+    description: Enable optional LLM-generated controls for statically detected risk findings.
     required: false
     default: "false"
 
@@ -85,7 +95,7 @@ runs:
       run: python -m pip install "${{ github.action_path }}/engine"
 
     - name: Generate stack inventory report
-      if: ${{ inputs.mode == 'scan' || inputs.mode == 'both' }}
+      if: ${{ inputs.mode == 'stack' || inputs.mode == 'both' }}
       shell: bash
       env:
         SCAN_PATH: ${{ inputs.path }}
@@ -108,19 +118,21 @@ runs:
         fi
         ai-stack-scan "${args[@]}"
 
-    - name: Run AI quality gate
-      if: ${{ inputs.mode == 'review' || inputs.mode == 'both' }}
+    - name: Run code assessment risk scan
+      if: ${{ inputs.mode == 'risk' || inputs.mode == 'both' }}
       shell: bash
       env:
-        REVIEW_PATH: ${{ inputs.path }}
-        QUALITY_OUTPUT: ${{ inputs.quality-output }}
-        QUALITY_JSON_OUTPUT: ${{ inputs.quality-json-output }}
+        RISK_PATH: ${{ inputs.path }}
+        RISK_OUTPUT: ${{ inputs.risk-output }}
+        RISK_JSON_OUTPUT: ${{ inputs.risk-json-output }}
+        RISK_REPORT_TITLE: ${{ inputs.risk-report-title }}
         CHANGED_ONLY: ${{ inputs.changed-only }}
         BASE_REF: ${{ inputs.base-ref }}
         FAIL_ON: ${{ inputs.fail-on }}
-        LLM_REVIEW: ${{ inputs.llm-review }}
+        RISK_NO_FAIL: ${{ inputs.risk-no-fail }}
+        LLM_RISK_CONTROL: ${{ inputs.llm-risk-control }}
         INPUT_LLM_API_KEY: ${{ inputs.llm-api-key }}
-        AI_STACK_USE_LLM: ${{ inputs.llm-review }}
+        AI_STACK_USE_LLM: ${{ inputs.llm-risk-control }}
         AI_STACK_LLM_BASE_URL: ${{ inputs.llm-base-url }}
         AI_STACK_LLM_MODEL: ${{ inputs.llm-model }}
         AI_STACK_ENV_FILE: ""
@@ -128,14 +140,20 @@ runs:
         if [ -n "$INPUT_LLM_API_KEY" ]; then
           export AI_STACK_LLM_API_KEY="$INPUT_LLM_API_KEY"
         fi
-        args=(--path "$REVIEW_PATH" --markdown-output "$QUALITY_OUTPUT" --json-output "$QUALITY_JSON_OUTPUT" --fail-on "$FAIL_ON")
+        if [ "$LLM_RISK_CONTROL" = "true" ]; then
+          export AI_STACK_USE_LLM="true"
+        fi
+        args=(--path "$RISK_PATH" --markdown-output "$RISK_OUTPUT" --json-output "$RISK_JSON_OUTPUT" --report-title "$RISK_REPORT_TITLE" --fail-on "$FAIL_ON")
         if [ "$CHANGED_ONLY" = "true" ]; then
           args+=(--changed-only)
         fi
         if [ -n "$BASE_REF" ]; then
           args+=(--base-ref "$BASE_REF")
         fi
-        if [ "$LLM_REVIEW" = "true" ]; then
-          args+=(--llm-review)
+        if [ "$RISK_NO_FAIL" = "true" ]; then
+          args+=(--no-fail)
         fi
-        ai-stack-review "${args[@]}"
+        if [ "$LLM_RISK_CONTROL" = "true" ]; then
+          args+=(--llm-risk-control)
+        fi
+        ai-risk-scan "${args[@]}"

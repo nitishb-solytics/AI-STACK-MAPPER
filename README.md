@@ -256,33 +256,66 @@ Each occurrence in `ai-stack-report.json` contains a `match_type` field.
 
 This makes it clear whether a finding was deterministic or LLM-assisted.
 
-## AI quality gate
+## Code assessment risk scan
 
-AI Stack Mapper also includes an optional quality-gate command:
+AI Stack Mapper also includes a code assessment risk scanner:
 
 ```bash
-ai-stack-review
+ai-risk-scan
 ```
 
-It can run on changed Python files in a pull request and produce:
+It scans Python code for codebase-level data/control risks and produces:
 
-- `ai-quality-report.md`
-- `ai-quality-report.json`
+- `AI_RISK_REPORT.md`
+- `ai-risk-report.json`
 
 It supports:
 
-- static quality rules
-- optional LLM review
-- severity threshold for failing CI
+- deterministic static AST risk detection
+- optional LLM-generated risk controls
+- severity threshold for CI/PR quality gates
+
+### Static risk/control checks
+
+The risk scanner performs static AST-based risk checks against Python code.
+These rules are deterministic and run without an LLM unless LLM risk controls
+are explicitly enabled.
+
+Current static risk coverage includes:
+
+| Area | Example risk detected |
+|---|---|
+| LLM reliability | LLM client/call without visible timeout or retry configuration |
+| LLM cost/control | LLM client/model without visible output token limit |
+| Context growth | Message/history list appended without visible trimming, summarization, or token budgeting |
+| Prompt injection | User-controlled input passed directly into prompt/messages |
+| Prompt quality | Prompt-like content without clear output contract |
+| Agent control | Agent/Crew created without max iteration or execution-time limit |
+| Agent tool scope | Agent configured with a broad tool list |
+| Agent delegation | Delegation enabled without visible iteration bounds |
+| Tool safety | Agent tool performs sensitive file/process operations |
+| Tool input validation | Tool function parameters missing type annotations/schema |
+| RAG retrieval | Vector search missing explicit `k`/`top_k`/`limit` |
+| RAG grounding | Vector search missing score threshold or metadata filter |
+| TextToSQL safety | Generated SQL execution without visible validation/read-only controls |
+
+Each finding includes file/line, severity, rule ID, feature area, and a fallback
+static suggestion. When LLM controls are enabled, the scanner extracts a focused
+code snapshot around each detected risk and sends only that snapshot plus risk
+metadata to the configured LLM. The LLM returns risk explanation, recommended
+control, safer code, confidence, and whether it agrees the finding is valid.
+
+In CI, `fail-on: "high"` blocks only high/critical findings; `fail-on:
+"medium"` is stricter.
 
 Example:
 
 ```yaml
-mode: "review"
+mode: "risk"
 changed-only: "true"
 base-ref: ${{ github.base_ref }}
 fail-on: "high"
-llm-review: "true"
+llm-risk-control: "true"
 ```
 
 If a finding is at or above the configured threshold, the action exits with a
@@ -290,10 +323,19 @@ non-zero status and can block merge when configured as a required GitHub check.
 
 ## GitHub Action usage
 
-Example workflow for stack inventory and PR quality gate:
+The GitHub Action supports three main modes:
+
+| Mode | Purpose | Typical output |
+|---|---|---|
+| `stack` | Component discovery only | `AI_STACK.md`, `ai-stack-report.json` |
+| `risk` | Code assessment risk scan only | `AI_RISK_REPORT.md`, `ai-risk-report.json` |
+| `both` | Run stack and risk scans together | all four reports |
+
+Example workflow for stack inventory on push, risk report on push, and PR
+quality gate on pull requests:
 
 ```yaml
-name: AI Stack Scan and Quality Gate
+name: AI Stack and Risk Scan
 
 on:
   push:
@@ -302,8 +344,8 @@ on:
     paths-ignore:
       - "AI_STACK.md"
       - "ai-stack-report.json"
-      - "ai-quality-report.md"
-      - "ai-quality-report.json"
+      - "AI_RISK_REPORT.md"
+      - "ai-risk-report.json"
 
   pull_request:
     branches:
@@ -316,7 +358,7 @@ permissions:
   pull-requests: read
 
 jobs:
-  update-stack-report:
+  stack-scan:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
@@ -335,7 +377,7 @@ jobs:
         uses: nitishb-solytics/AI-STACK-MAPPER@main
         with:
           path: "."
-          mode: "scan"
+          mode: "stack"
           scanner-mode: "hybrid"
           enrich: "true"
           llm-api-key: ${{ secrets.AI_STACK_LLM_API_KEY }}
@@ -364,7 +406,55 @@ jobs:
           git commit -m "chore: update AI stack report"
           git push
 
-  ai-quality-gate:
+  risk-scan:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run code assessment risk scan
+        uses: nitishb-solytics/AI-STACK-MAPPER@main
+        with:
+          path: "."
+          mode: "risk"
+          risk-no-fail: "true"
+          llm-risk-control: "true"
+          llm-api-key: ${{ secrets.AI_STACK_LLM_API_KEY }}
+          llm-base-url: "https://openrouter.ai/api/v1"
+          llm-model: "google/gemma-4-26b-a4b-it:free"
+          risk-output: "AI_RISK_REPORT.md"
+          risk-json-output: "ai-risk-report.json"
+
+      - name: Validate risk reports
+        shell: bash
+        run: |
+          test -s AI_RISK_REPORT.md
+          test -s ai-risk-report.json
+          python -m json.tool ai-risk-report.json > /dev/null
+
+      - name: Commit updated risk reports
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add AI_RISK_REPORT.md ai-risk-report.json
+          if git diff --cached --quiet; then
+            echo "No AI risk changes detected."
+            exit 0
+          fi
+          git commit -m "chore: update AI risk report"
+          git push
+
+  pr-quality-gate:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
 
@@ -383,29 +473,29 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Run AI quality gate
+      - name: Run PR risk quality gate
         uses: nitishb-solytics/AI-STACK-MAPPER@main
         with:
           path: "."
-          mode: "review"
+          mode: "risk"
           changed-only: "true"
           base-ref: ${{ github.base_ref }}
           fail-on: "high"
-          llm-review: "true"
+          llm-risk-control: "true"
           llm-api-key: ${{ secrets.AI_STACK_LLM_API_KEY }}
           llm-base-url: "https://openrouter.ai/api/v1"
           llm-model: "google/gemma-4-26b-a4b-it:free"
-          quality-output: "ai-quality-report.md"
-          quality-json-output: "ai-quality-report.json"
+          risk-output: "AI_RISK_REPORT.md"
+          risk-json-output: "ai-risk-report.json"
 
-      - name: Upload quality report
+      - name: Upload PR risk report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ai-quality-report
+          name: ai-risk-report
           path: |
-            ai-quality-report.md
-            ai-quality-report.json
+            AI_RISK_REPORT.md
+            ai-risk-report.json
           if-no-files-found: error
 ```
 
@@ -449,23 +539,24 @@ ai-stack-scan --path . \
   --json-output ai-stack-report.json
 ```
 
-Quality gate:
+Risk scan:
 
 ```bash
-ai-stack-review --path . --fail-on high --markdown-output ai-quality-report.md --json-output ai-quality-report.json
+ai-risk-scan --path . --report-title "AI Risk Report" --fail-on high --markdown-output AI_RISK_REPORT.md --json-output ai-risk-report.json
 ```
 
-Quality gate with LLM review:
+Risk scan with LLM controls:
 
 ```bash
-ai-stack-review --path . \
+ai-risk-scan --path . \
+  --report-title "AI Risk Report" \
   --fail-on high \
-  --llm-review \
+  --llm-risk-control \
   --llm-api-key "$AI_STACK_LLM_API_KEY" \
   --llm-base-url "https://openrouter.ai/api/v1" \
   --llm-model "google/gemma-4-26b-a4b-it:free" \
-  --markdown-output ai-quality-report.md \
-  --json-output ai-quality-report.json
+  --markdown-output AI_RISK_REPORT.md \
+  --json-output ai-risk-report.json
 ```
 
 ## VS Code extension
