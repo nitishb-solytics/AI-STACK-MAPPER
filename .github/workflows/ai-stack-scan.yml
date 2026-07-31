@@ -31,6 +31,7 @@ jobs:
         uses: ./
         with:
           path: sample_project
+          mode: stack
           markdown-output: AI_STACK.md
           json-output: ai-stack-report.json
           enrich: "false"
@@ -58,4 +59,50 @@ jobs:
           path: |
             AI_STACK.md
             ai-stack-report.json
+          if-no-files-found: error
+
+  test-risk-action:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout AI Stack Mapper
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run local AI Risk Scanner action
+        uses: ./
+        with:
+          path: sample_project
+          mode: risk
+          risk-output: AI_RISK_REPORT.md
+          risk-json-output: ai-risk-report.json
+          risk-no-fail: "true"
+
+      - name: Validate generated risk reports
+        shell: bash
+        run: |
+          test -s AI_RISK_REPORT.md
+          test -s ai-risk-report.json
+          python -m json.tool ai-risk-report.json > /dev/null
+
+      - name: Show risk report summary
+        shell: bash
+        run: |
+          echo "Risk Markdown report:"
+          head -n 20 AI_RISK_REPORT.md
+
+          echo
+          echo "Risk JSON report generated successfully."
+
+      - name: Upload risk test reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-risk-scanner-test-reports
+          path: |
+            AI_RISK_REPORT.md
+            ai-risk-report.json
           if-no-files-found: error
