@@ -11,6 +11,7 @@ CATEGORY_MCP = "MCP"
 CATEGORY_TOOL = "TOOL"
 CATEGORY_AGENT_FRAMEWORK = "AGENT_FRAMEWORK"
 CATEGORY_VECTOR_STORE = "VECTOR_STORE"
+CATEGORY_PROMPT = "PROMPT"
 
 ALL_CATEGORIES = [
     CATEGORY_LLM,
@@ -18,6 +19,7 @@ ALL_CATEGORIES = [
     CATEGORY_TOOL,
     CATEGORY_AGENT_FRAMEWORK,
     CATEGORY_VECTOR_STORE,
+    CATEGORY_PROMPT,
 ]
 
 CATEGORY_LABELS = {
@@ -26,6 +28,7 @@ CATEGORY_LABELS = {
     CATEGORY_TOOL: "Tools / Function Calling",
     CATEGORY_AGENT_FRAMEWORK: "Agent & Orchestration Frameworks",
     CATEGORY_VECTOR_STORE: "Vector Stores / Memory",
+    CATEGORY_PROMPT: "Prompts / Instructions",
 }
 
 CONFIDENCE_HIGH = "high"
@@ -128,6 +131,7 @@ class ScanResult:
     scanned_files: int
     scanner_mode: str = "static"
     skipped_files: List[str] = field(default_factory=list)
+    local_agents: List[Dict[str, Any]] = field(default_factory=list)
     components: Dict[str, Component] = field(default_factory=dict)  # key: category|name
 
     def add(self, category: str, name: str, package: str, occurrence: Occurrence) -> None:
@@ -151,5 +155,6 @@ class ScanResult:
             "scanned_files": self.scanned_files,
             "skipped_files": self.skipped_files,
             "total_components": len(self.components),
+            "local_agents": self.local_agents,
             "categories": by_category,
         }

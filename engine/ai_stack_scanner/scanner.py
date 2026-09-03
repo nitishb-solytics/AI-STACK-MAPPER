@@ -6,6 +6,7 @@ from typing import List
 from .models import ScanResult
 from .ast_visitor import scan_source
 from .config_scanner import scan_dependency_file, scan_mcp_config, scan_env_file, scan_js_dependency_file
+from .local_agents import infer_local_agents, scan_prompt_source
 from .registry import MCP_CONFIG_FILENAMES, DEPENDENCY_FILES
 
 IGNORE_DIRS = {
@@ -44,6 +45,7 @@ def scan_directory(root: str, scanner_mode: str = "static") -> ScanResult:
                 with open(path, "r", encoding="utf-8", errors="ignore") as f:
                     source = f.read()
                 findings = scan_source(rel, source)
+                findings.extend(scan_prompt_source(rel, source))
                 result.scanned_files += 1
             elif fn in MCP_CONFIG_FILENAMES:
                 with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -73,4 +75,5 @@ def scan_directory(root: str, scanner_mode: str = "static") -> ScanResult:
         for category, name, package, occurrence in findings:
             result.add(category, name, package, occurrence)
 
+    result.local_agents = infer_local_agents(result.to_dict())
     return result

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ScanData, ComponentData, Occurrence } from './scannerBridge';
+import { ScanData, ComponentData, Occurrence, LocalAgentData } from './scannerBridge';
 
 const CATEGORY_LABELS: { [k: string]: string } = {
   LLM: 'LLM Providers',
@@ -7,6 +7,7 @@ const CATEGORY_LABELS: { [k: string]: string } = {
   TOOL: 'Tools / Function Calling',
   AGENT_FRAMEWORK: 'Agent & Orchestration Frameworks',
   VECTOR_STORE: 'Vector Stores / Memory',
+  PROMPT: 'Prompts / Instructions',
 };
 
 const CATEGORY_ICONS: { [k: string]: string } = {
@@ -15,6 +16,7 @@ const CATEGORY_ICONS: { [k: string]: string } = {
   TOOL: 'tools',
   AGENT_FRAMEWORK: 'organization',
   VECTOR_STORE: 'database',
+  PROMPT: 'symbol-string',
 };
 
 const CONFIDENCE_ICONS: { [k: string]: string } = {
@@ -23,7 +25,7 @@ const CONFIDENCE_ICONS: { [k: string]: string } = {
   low: 'circle-outline',
 };
 
-type NodeKind = 'message' | 'category' | 'component' | 'occurrence';
+type NodeKind = 'message' | 'localAgents' | 'localAgent' | 'category' | 'component' | 'occurrence';
 
 export class AiStackTreeItem extends vscode.TreeItem {
   constructor(
@@ -31,7 +33,8 @@ export class AiStackTreeItem extends vscode.TreeItem {
     collapsibleState: vscode.TreeItemCollapsibleState,
     public readonly kind: NodeKind,
     public readonly categoryKey?: string,
-    public readonly component?: ComponentData
+    public readonly component?: ComponentData,
+    public readonly localAgent?: LocalAgentData
   ) {
     super(label, collapsibleState);
   }
@@ -73,13 +76,23 @@ export class AiStackTreeProvider implements vscode.TreeDataProvider<AiStackTreeI
     }
 
     if (!element) {
+      const roots: AiStackTreeItem[] = [];
+      if (this.data.local_agents?.length) {
+        const item = new AiStackTreeItem(
+          `Local AI Agents (${this.data.local_agents.length})`,
+          vscode.TreeItemCollapsibleState.Expanded,
+          'localAgents'
+        );
+        item.iconPath = new vscode.ThemeIcon('hubot');
+        roots.push(item);
+      }
       const categories = Object.keys(this.data.categories).filter(
         (cat) => this.data!.categories[cat].length > 0
       );
-      if (categories.length === 0) {
+      if (categories.length === 0 && roots.length === 0) {
         return [this.messageItem('No AI-stack components detected')];
       }
-      return categories.map((cat) => {
+      return roots.concat(categories.map((cat) => {
         const count = this.data!.categories[cat].length;
         const item = new AiStackTreeItem(
           `${CATEGORY_LABELS[cat] || cat} (${count})`,
@@ -88,6 +101,55 @@ export class AiStackTreeProvider implements vscode.TreeDataProvider<AiStackTreeI
           cat
         );
         item.iconPath = new vscode.ThemeIcon(CATEGORY_ICONS[cat] || 'symbol-misc');
+        return item;
+      }));
+    }
+
+    if (element.kind === 'localAgents') {
+      return (this.data.local_agents || []).map((agent) => {
+        const item = new AiStackTreeItem(
+          agent.name,
+          vscode.TreeItemCollapsibleState.Collapsed,
+          'localAgent',
+          undefined,
+          undefined,
+          agent
+        );
+        item.description = `${agent.files.length} file(s)`;
+        item.iconPath = new vscode.ThemeIcon('robot');
+        const parts = Object.entries(agent.components || {})
+          .filter(([, values]) => values.length > 0)
+          .map(([bucket, values]) => `${bucket}: ${values.join(', ')}`);
+        item.tooltip = new vscode.MarkdownString(
+          `**${agent.name}**\n\nFiles: ${agent.files.length}\n\n${parts.join('\n\n') || 'No mapped components'}`
+        );
+        return item;
+      });
+    }
+
+    if (element.kind === 'localAgent' && element.localAgent) {
+      return element.localAgent.evidence.map((ev) => {
+        const item = new AiStackTreeItem(
+          `${ev.component || ev.category} @ ${ev.file}:${ev.line}`,
+          vscode.TreeItemCollapsibleState.None,
+          'occurrence'
+        );
+        item.description = ev.category;
+        item.iconPath = new vscode.ThemeIcon('file-code');
+        item.command = {
+          command: 'aiStackMapper.openOccurrence',
+          title: 'Open',
+          arguments: [
+            this.data!.root,
+            {
+              file: ev.file,
+              line: ev.line || 1,
+              match_type: ev.match_type || ev.category,
+              confidence: 'medium',
+              detail: ev.detail || '',
+            },
+          ],
+        };
         return item;
       });
     }

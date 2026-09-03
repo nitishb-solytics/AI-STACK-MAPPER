@@ -1,11 +1,61 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs/promises';
 import { ScannerBridge, Occurrence, LLM_API_KEY_SECRET, RiskFinding } from './scannerBridge';
 import { AiStackTreeProvider } from './treeViewProvider';
 import { RiskTreeProvider } from './riskTreeViewProvider';
 
 let statusBarItem: vscode.StatusBarItem;
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+const VAULT_TOKEN_SECRET = 'aiStackMapper.vaultToken';
+
+function getWorkspaceRoot(): string | undefined {
+  const folders = vscode.workspace.workspaceFolders;
+  return folders?.[0]?.uri.fsPath;
+}
+
+async function readJsonFile<T>(filePath: string): Promise<T | undefined> {
+  try {
+    const raw = await fs.readFile(filePath, 'utf8');
+    return JSON.parse(raw) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+async function postJson(url: string, headers: Record<string, string>, body: unknown): Promise<any> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...headers,
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  let data: any = {};
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { raw: text };
+    }
+  }
+  if (!response.ok) {
+    const msg = data?.msg || data?.detail || data?.message || text || response.statusText;
+    throw new Error(`Vault returned HTTP ${response.status}: ${msg}`);
+  }
+  return data;
+}
+
+function normalizeJwtHeader(token: string): string {
+  const trimmed = token.trim();
+  if (/^(JWT|Bearer)\s+/i.test(trimmed)) {
+    return trimmed;
+  }
+  return `JWT ${trimmed}`;
+}
 
 export function activate(context: vscode.ExtensionContext): void {
   const treeProvider = new AiStackTreeProvider();
@@ -29,10 +79,16 @@ export function activate(context: vscode.ExtensionContext): void {
     statusBarItem.text = '$(sync~spin) AI Stack: scanning...';
     statusBarItem.show();
     try {
-      const data = await bridge.scan(root);
+      const result = await bridge.scan(root);
+      const data = result.data;
       treeProvider.setData(data);
       statusBarItem.text = `$(circuit-board) AI Stack: ${data.total_components}`;
-      statusBarItem.tooltip = `${data.total_components} AI-stack components across ${data.scanned_files} files. Click to re-scan.`;
+      statusBarItem.tooltip = `Generated ${path.basename(result.markdownPath)} and ${path.basename(result.jsonPath)}. Click to re-scan.`;
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(result.markdownPath));
+      await vscode.window.showTextDocument(doc);
+      vscode.window.showInformationMessage(
+        `AI Stack Mapper: generated ${path.basename(result.markdownPath)} and ${path.basename(result.jsonPath)}.`
+      );
     } catch (err: any) {
       treeProvider.setError(err.message);
       statusBarItem.text = '$(error) AI Stack: scan failed';
@@ -68,6 +124,122 @@ export function activate(context: vscode.ExtensionContext): void {
         statusBarItem.text = '$(error) AI Risk: scan failed';
         statusBarItem.tooltip = err.message;
         vscode.window.showErrorMessage(`AI Risk Scanner: ${err.message}`);
+      }
+    }),
+
+    vscode.commands.registerCommand('aiStackMapper.publishToVault', async () => {
+      const root = getWorkspaceRoot();
+      if (!root) {
+        vscode.window.showWarningMessage('AI Stack Mapper: open the client repository folder first.');
+        return;
+      }
+
+      const cfg = vscode.workspace.getConfiguration('aiStackMapper');
+      const defaultBaseUrl = cfg.get<string>('vaultBaseUrl', 'http://127.0.0.1:8000') || 'http://127.0.0.1:8000';
+      const baseUrl = await vscode.window.showInputBox({
+        prompt: 'Vault backend base URL',
+        value: defaultBaseUrl,
+        ignoreFocusOut: true,
+      });
+      if (!baseUrl) return;
+
+      const defaultOrg = cfg.get<string>('vaultOrg', '') || '';
+      const org = await vscode.window.showInputBox({
+        prompt: 'Vault Org header / tenant account id',
+        value: defaultOrg,
+        placeHolder: 'vault_agent365',
+        ignoreFocusOut: true,
+      });
+      if (!org) return;
+
+      const storedToken = await context.secrets.get(VAULT_TOKEN_SECRET);
+      const token = await vscode.window.showInputBox({
+        prompt: 'Vault JWT token. Paste token only, or full "JWT <token>" value.',
+        value: storedToken || '',
+        password: true,
+        ignoreFocusOut: true,
+      });
+      if (!token) return;
+      await context.secrets.store(VAULT_TOKEN_SECRET, token);
+
+      const repoUrl = await vscode.window.showInputBox({
+        prompt: 'Optional Git repository URL to store as metadata',
+        value: cfg.get<string>('vaultRepoUrl', '') || '',
+        ignoreFocusOut: true,
+      });
+      const branch = await vscode.window.showInputBox({
+        prompt: 'Optional Git branch to store as metadata',
+        value: cfg.get<string>('vaultBranch', '') || '',
+        ignoreFocusOut: true,
+      });
+
+      const mode = await vscode.window.showQuickPick(
+        [
+          { label: 'Import to Vault', description: 'Create AIAgent and linked AIComponents', discover: true },
+          { label: 'Preview only', description: 'Validate mapping without creating Vault records', discover: false },
+        ],
+        { placeHolder: 'Choose how to publish scanner results to Vault', ignoreFocusOut: true }
+      );
+      if (!mode) return;
+
+      statusBarItem.text = '$(sync~spin) AI Stack: preparing Vault publish...';
+      statusBarItem.show();
+
+      try {
+        const stackPath = path.join(root, 'ai-stack-report.json');
+        const riskPath = path.join(root, 'ai-risk-report.json');
+
+        let stack = await readJsonFile<any>(stackPath);
+        if (!stack) {
+          statusBarItem.text = '$(sync~spin) AI Stack: scanning before publish...';
+          const stackResult = await bridge.scan(root);
+          stack = stackResult.data;
+          treeProvider.setData(stack);
+        }
+
+        let risk = await readJsonFile<any>(riskPath);
+        if (!risk) {
+          statusBarItem.text = '$(sync~spin) AI Risk: scanning before publish...';
+          const riskResult = await bridge.scanRisks(root);
+          risk = riskResult.data;
+          riskTreeProvider.setData(risk);
+        }
+
+        const endpoint = `${baseUrl.replace(/\/+$/, '')}/vault/ai-governance/codebase-discovery`;
+        const payload = {
+          source_type: 'scanner_report',
+          repo_name: path.basename(root),
+          repo_path: root,
+          repo_url: repoUrl || '',
+          branch: branch || '',
+          stack,
+          risk,
+          discover: mode.discover,
+          include_risks: true,
+        };
+
+        statusBarItem.text = '$(cloud-upload) AI Stack: publishing to Vault...';
+        const result = await postJson(
+          endpoint,
+          {
+            Authorization: normalizeJwtHeader(token),
+            Org: org,
+          },
+          payload
+        );
+
+        const summary = result?.summary
+          ? `agents=${result.summary.agents}, components=${result.summary.components}, linked=${result.summary.linked}`
+          : `agents=${result?.agents?.length ?? 0}`;
+        statusBarItem.text = mode.discover ? '$(check) AI Stack: published to Vault' : '$(check) AI Stack: Vault preview ready';
+        statusBarItem.tooltip = `Vault ${mode.discover ? 'import' : 'preview'} completed: ${summary}`;
+        vscode.window.showInformationMessage(
+          `AI Stack Mapper: Vault ${mode.discover ? 'import' : 'preview'} completed (${summary}).`
+        );
+      } catch (err: any) {
+        statusBarItem.text = '$(error) AI Stack: Vault publish failed';
+        statusBarItem.tooltip = err.message;
+        vscode.window.showErrorMessage(`AI Stack Mapper Vault publish failed: ${err.message}`);
       }
     }),
 
@@ -151,7 +323,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(saveWatcher);
 
   // Initial scan when the extension activates.
-  void runScan();
+  // void runScan();
 }
 
 export function deactivate(): void {

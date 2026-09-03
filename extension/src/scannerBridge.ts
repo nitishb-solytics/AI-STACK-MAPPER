@@ -38,13 +38,36 @@ export interface ScanData {
   scanned_files: number;
   skipped_files: string[];
   total_components: number;
+  local_agents?: LocalAgentData[];
   categories: { [category: string]: ComponentData[] };
+}
+
+export interface LocalAgentData {
+  key: string;
+  name: string;
+  score: number;
+  files: string[];
+  components: { [bucket: string]: string[] };
+  evidence: Array<{
+    category: string;
+    component: string;
+    file: string;
+    line: number;
+    match_type: string;
+    detail: string;
+  }>;
 }
 
 export interface RiskScanResult {
   markdownPath: string;
   jsonPath: string;
   data: RiskReportData;
+}
+
+export interface StackScanResult {
+  markdownPath: string;
+  jsonPath: string;
+  data: ScanData;
 }
 
 export interface RiskFinding {
@@ -103,7 +126,7 @@ export class ScannerBridge {
     return path.join(this.extensionPath, 'python');
   }
 
-  async scan(workspaceRoot: string): Promise<ScanData> {
+  async scan(workspaceRoot: string): Promise<StackScanResult> {
     const cfg = vscode.workspace.getConfiguration('aiStackMapper');
     const enrich = cfg.get<boolean>('enrichWithLLM', false);
 
@@ -121,7 +144,19 @@ export class ScannerBridge {
     // own `.env` to silently influence enrichment settings.
     env.AI_STACK_ENV_FILE = '';
 
-    const args = ['-m', 'ai_stack_scanner.cli', '--path', workspaceRoot, '--format', 'json'];
+    const markdownPath = path.join(workspaceRoot, 'AI_STACK.md');
+    const jsonPath = path.join(workspaceRoot, 'ai-stack-report.json');
+
+    const args = [
+      '-m',
+      'ai_stack_scanner.cli',
+      '--path',
+      workspaceRoot,
+      '--markdown-output',
+      markdownPath,
+      '--json-output',
+      jsonPath,
+    ];
 
     if (enrich) {
       const apiKey = await this.secrets.get(LLM_API_KEY_SECRET);
@@ -154,9 +189,7 @@ export class ScannerBridge {
         return;
       }
 
-      let stdout = '';
       let stderr = '';
-      proc.stdout.on('data', (d) => (stdout += d.toString()));
       proc.stderr.on('data', (d) => (stderr += d.toString()));
 
       proc.on('error', (err) => {
@@ -169,15 +202,19 @@ export class ScannerBridge {
       });
 
       proc.on('close', (code) => {
-        if (code !== 0) {
-          reject(new Error(`Scanner exited with code ${code}.\n${stderr}`));
-          return;
-        }
-        try {
-          resolve(JSON.parse(stdout) as ScanData);
-        } catch (err) {
-          reject(new Error(`Could not parse scanner output as JSON: ${err}\n${stdout.slice(0, 500)}`));
-        }
+        void (async () => {
+          if (code !== 0) {
+            reject(new Error(`Scanner exited with code ${code}.\n${stderr}`));
+            return;
+          }
+          try {
+            const raw = await fs.readFile(jsonPath, 'utf8');
+            const data = JSON.parse(raw) as ScanData;
+            resolve({ markdownPath, jsonPath, data });
+          } catch (err: any) {
+            reject(new Error(`Scanner completed but could not read ${path.basename(jsonPath)}: ${err.message}`));
+          }
+        })();
       });
     });
   }

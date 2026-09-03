@@ -29,6 +29,11 @@
         "icon": "$(shield)"
       },
       {
+        "command": "aiStackMapper.publishToVault",
+        "title": "AI Stack: Publish Discovery to Vault",
+        "icon": "$(cloud-upload)"
+      },
+      {
         "command": "aiStackMapper.setLlmApiKey",
         "title": "AI Stack: Set LLM API Key"
       },
@@ -69,6 +74,11 @@
           "command": "aiStackMapper.scanRisks",
           "when": "view == aiStackMapperView || view == aiStackMapperRiskView",
           "group": "navigation"
+        },
+        {
+          "command": "aiStackMapper.publishToVault",
+          "when": "view == aiStackMapperView || view == aiStackMapperRiskView",
+          "group": "navigation"
         }
       ]
     },
@@ -82,7 +92,7 @@
         },
         "aiStackMapper.scanOnSave": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "description": "Automatically re-scan (debounced) when a relevant file is saved."
         },
         "aiStackMapper.enrichWithLLM": {
@@ -122,6 +132,26 @@
           "default": "high",
           "enum": ["info", "low", "medium", "high", "critical"],
           "description": "Minimum risk severity sent to the LLM for control generation."
+        },
+        "aiStackMapper.vaultBaseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000",
+          "description": "Vault backend base URL used by 'AI Stack: Publish Discovery to Vault'."
+        },
+        "aiStackMapper.vaultOrg": {
+          "type": "string",
+          "default": "",
+          "description": "Vault Org header / tenant account id used by 'AI Stack: Publish Discovery to Vault'."
+        },
+        "aiStackMapper.vaultRepoUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Optional repository URL metadata sent to Vault when publishing scanner results."
+        },
+        "aiStackMapper.vaultBranch": {
+          "type": "string",
+          "default": "",
+          "description": "Optional repository branch metadata sent to Vault when publishing scanner results."
         }
       }
     }
