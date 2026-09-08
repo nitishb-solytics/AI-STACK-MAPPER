@@ -89,6 +89,36 @@ export interface StackScanResult {
   data: ScanData;
 }
 
+export interface RiskFinding {
+  severity: string;
+  area: string;
+  file: string;
+  line: number;
+  title: string;
+  suggestion: string;
+  rule_id: string;
+  source: string;
+  evidence_snippet?: string;
+}
+
+export interface RiskReportData {
+  root: string;
+  generated_at: string;
+  scanned_files: number;
+  fail_on: string;
+  status: string;
+  risk_scan_mode: string;
+  severity_counts: { [severity: string]: number };
+  findings: RiskFinding[];
+  skipped_files: string[];
+}
+
+export interface RiskScanResult {
+  markdownPath: string;
+  jsonPath: string;
+  data: RiskReportData;
+}
+
 /**
  * Spawns the bundled `ai_stack_scanner` Python package as a subprocess.
  * No `pip install` is required: we point PYTHONPATH at the copy of the
@@ -239,6 +269,64 @@ export class ScannerBridge {
         } catch (err: any) {
           reject(new Error(`Could not parse Vault payload output: ${err.message}`));
         }
+      });
+    });
+  }
+
+  async scanRisks(workspaceRoot: string): Promise<RiskScanResult> {
+    const cfg = vscode.workspace.getConfiguration('aiStackMapper');
+    const failOn = cfg.get<string>('riskFailOn', 'high') || 'high';
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    const existing = env.PYTHONPATH ? `${env.PYTHONPATH}${path.delimiter}` : '';
+    env.PYTHONPATH = `${existing}${this.bundledEnginePath}`;
+
+    const markdownPath = path.join(workspaceRoot, 'AI_RISK_REPORT.md');
+    const jsonPath = path.join(workspaceRoot, 'ai-risk-report.json');
+    const args = [
+      '-m',
+      'ai_stack_scanner.risk_cli',
+      '--path',
+      workspaceRoot,
+      '--markdown-output',
+      markdownPath,
+      '--json-output',
+      jsonPath,
+      '--fail-on',
+      failOn,
+    ];
+
+    return new Promise((resolve, reject) => {
+      let proc: cp.ChildProcessWithoutNullStreams;
+      try {
+        proc = cp.spawn(this.pythonPath, args, { env, cwd: workspaceRoot });
+      } catch (err: any) {
+        reject(new Error(`Failed to launch "${this.pythonPath}": ${err.message}`));
+        return;
+      }
+
+      let stderr = '';
+      proc.stderr.on('data', (d) => (stderr += d.toString()));
+      proc.on('error', (err) => {
+        reject(
+          new Error(
+            `Could not run Python ("${this.pythonPath}"): ${err.message}. ` +
+              `If Python isn't on your PATH, set "aiStackMapper.pythonPath" in Settings.`
+          )
+        );
+      });
+      proc.on('close', (code) => {
+        void (async () => {
+          if (code !== 0) {
+            reject(new Error(`Risk scanner exited with code ${code}.\n${stderr}`));
+            return;
+          }
+          try {
+            const raw = await fs.readFile(jsonPath, 'utf8');
+            resolve({ markdownPath, jsonPath, data: JSON.parse(raw) as RiskReportData });
+          } catch (err: any) {
+            reject(new Error(`Risk scanner completed but could not read ${path.basename(jsonPath)}: ${err.message}`));
+          }
+        })();
       });
     });
   }

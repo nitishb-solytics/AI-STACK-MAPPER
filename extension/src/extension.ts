@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { ScannerBridge, Occurrence } from './scannerBridge';
+import { ScannerBridge, Occurrence, RiskFinding } from './scannerBridge';
 import { AiStackTreeProvider } from './treeViewProvider';
+import { RiskTreeProvider } from './riskTreeViewProvider';
 
 let statusBarItem: vscode.StatusBarItem;
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -47,9 +48,11 @@ async function postJson(url: string, headers: Record<string, string>, body: unkn
 
 export function activate(context: vscode.ExtensionContext): void {
   const treeProvider = new AiStackTreeProvider();
+  const riskTreeProvider = new RiskTreeProvider();
   const bridge = new ScannerBridge(context.extensionPath, context.secrets);
 
   context.subscriptions.push(vscode.window.registerTreeDataProvider('aiStackMapperView', treeProvider));
+  context.subscriptions.push(vscode.window.registerTreeDataProvider('aiStackMapperRiskView', riskTreeProvider));
 
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusBarItem.command = 'aiStackMapper.scan';
@@ -168,7 +171,45 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('aiStackMapper.scan', runScan),
+    vscode.commands.registerCommand('aiStackMapper.scanRisks', async () => {
+      const root = getWorkspaceRoot();
+      if (!root) {
+        vscode.window.showWarningMessage('AI Risk Scanner: open a folder or workspace first.');
+        return;
+      }
+      statusBarItem.text = '$(sync~spin) AI Risk: scanning...';
+      statusBarItem.show();
+      try {
+        const result = await bridge.scanRisks(root);
+        riskTreeProvider.setData(result.data);
+        statusBarItem.text = '$(shield) AI Risk: report ready';
+        statusBarItem.tooltip = `Generated ${path.basename(result.markdownPath)} and ${path.basename(result.jsonPath)}.`;
+        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(result.markdownPath));
+        await vscode.window.showTextDocument(doc);
+        vscode.window.showInformationMessage(
+          `AI Risk Scanner: ${result.data.status}, ${result.data.findings.length} finding(s). Risk data was not published to Vault.`
+        );
+      } catch (err: any) {
+        riskTreeProvider.setError(err.message);
+        statusBarItem.text = '$(error) AI Risk: scan failed';
+        statusBarItem.tooltip = err.message;
+        vscode.window.showErrorMessage(`AI Risk Scanner: ${err.message}`);
+      }
+    }),
     vscode.commands.registerCommand('aiStackMapper.publishToVault', publishToVault),
+    vscode.commands.registerCommand('aiStackMapper.openRiskFinding', async (root: string, finding: RiskFinding) => {
+      try {
+        const uri = vscode.Uri.file(path.join(root, finding.file));
+        const doc = await vscode.workspace.openTextDocument(uri);
+        const editor = await vscode.window.showTextDocument(doc);
+        const line = Math.max(0, Math.min(finding.line - 1, doc.lineCount - 1));
+        const range = doc.lineAt(line).range;
+        editor.selection = new vscode.Selection(range.start, range.start);
+        editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+      } catch {
+        vscode.window.showWarningMessage(`AI Risk Scanner: could not open ${finding.file}:${finding.line}`);
+      }
+    }),
     vscode.commands.registerCommand('aiStackMapper.openOccurrence', async (root: string, occ: Occurrence) => {
       try {
         const uri = vscode.Uri.file(path.join(root, occ.file));

@@ -4,6 +4,11 @@
   "description": "Discover local AI agents in a codebase and publish them to Vault AI Governance Auto Discovery.",
   "version": "0.1.0",
   "publisher": "local-dev",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/solytics-partners/ai-stack-mapper.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -22,6 +27,11 @@
       {
         "command": "aiStackMapper.exportMarkdown",
         "title": "AI Stack: Export Markdown Report"
+      },
+      {
+        "command": "aiStackMapper.scanRisks",
+        "title": "AI Risk: Scan Workspace",
+        "icon": "$(shield)"
       },
       {
         "command": "aiStackMapper.publishToVault",
@@ -43,6 +53,10 @@
         {
           "id": "aiStackMapperView",
           "name": "Components"
+        },
+        {
+          "id": "aiStackMapperRiskView",
+          "name": "Risks"
         }
       ]
     },
@@ -56,6 +70,16 @@
         {
           "command": "aiStackMapper.publishToVault",
           "when": "view == aiStackMapperView",
+          "group": "navigation"
+        },
+        {
+          "command": "aiStackMapper.scanRisks",
+          "when": "view == aiStackMapperView || view == aiStackMapperRiskView",
+          "group": "navigation"
+        },
+        {
+          "command": "aiStackMapper.publishToVault",
+          "when": "view == aiStackMapperRiskView",
           "group": "navigation"
         }
       ]
@@ -72,6 +96,12 @@
           "type": "boolean",
           "default": false,
           "description": "Automatically re-scan (debounced) when a relevant file is saved."
+        },
+        "aiStackMapper.riskFailOn": {
+          "type": "string",
+          "default": "high",
+          "enum": ["info", "low", "medium", "high", "critical"],
+          "description": "Severity threshold used in the generated local AI risk report status. Risk data is not published to Vault."
         },
         "aiStackMapper.vaultBaseUrl": {
           "type": "string",
