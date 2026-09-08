@@ -1,25 +1,30 @@
 import * as vscode from 'vscode';
 import { RiskFinding, RiskReportData } from './scannerBridge';
 
-class RiskTreeItem extends vscode.TreeItem {
+const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'info'];
+
+const SEVERITY_ICONS: { [severity: string]: string } = {
+  critical: 'error',
+  high: 'warning',
+  medium: 'issues',
+  low: 'info',
+  info: 'circle-outline',
+};
+
+type RiskNodeKind = 'message' | 'severity' | 'area' | 'finding';
+
+export class RiskTreeItem extends vscode.TreeItem {
   constructor(
     label: string,
     collapsibleState: vscode.TreeItemCollapsibleState,
-    readonly kind: 'severity' | 'finding' | 'message',
-    readonly finding?: RiskFinding
+    public readonly kind: RiskNodeKind,
+    public readonly severity?: string,
+    public readonly area?: string,
+    public readonly finding?: RiskFinding
   ) {
     super(label, collapsibleState);
   }
 }
-
-const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'info'];
-const ICONS: Record<string, string> = {
-  critical: 'error',
-  high: 'warning',
-  medium: 'circle-outline',
-  low: 'info',
-  info: 'info',
-};
 
 export class RiskTreeProvider implements vscode.TreeDataProvider<RiskTreeItem> {
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<RiskTreeItem | undefined | void>();
@@ -40,64 +45,122 @@ export class RiskTreeProvider implements vscode.TreeDataProvider<RiskTreeItem> {
     this._onDidChangeTreeData.fire();
   }
 
+  clear(): void {
+    this.data = undefined;
+    this.errorMessage = undefined;
+    this._onDidChangeTreeData.fire();
+  }
+
   getTreeItem(element: RiskTreeItem): vscode.TreeItem {
     return element;
   }
 
   getChildren(element?: RiskTreeItem): RiskTreeItem[] {
     if (this.errorMessage) {
-      return [new RiskTreeItem(`$(error) ${this.errorMessage}`, vscode.TreeItemCollapsibleState.None, 'message')];
+      return [this.messageItem(`$(error) ${this.errorMessage}`)];
     }
     if (!this.data) {
-      return [new RiskTreeItem('Run "AI Risk: Scan Workspace" to begin', vscode.TreeItemCollapsibleState.None, 'message')];
+      return [this.messageItem('Run "AI Risk: Scan Workspace" to begin')];
     }
+
+    const findings = this.data.findings || [];
     if (!element) {
-      if (!this.data.findings.length) {
-        return [new RiskTreeItem('No code assessment risks detected', vscode.TreeItemCollapsibleState.None, 'message')];
+      if (findings.length === 0) {
+        return [this.messageItem('No code assessment risks detected')];
       }
       return SEVERITY_ORDER
-        .filter((severity) => (this.data!.severity_counts[severity] || 0) > 0)
         .map((severity) => {
-          const count = this.data!.severity_counts[severity] || 0;
+          const count = findings.filter((finding) => finding.severity === severity).length;
+          return { severity, count };
+        })
+        .filter(({ count }) => count > 0)
+        .map(({ severity, count }) => {
           const item = new RiskTreeItem(
-            `${severity.toUpperCase()} (${count})`,
+            `${this.titleCase(severity)} (${count})`,
             vscode.TreeItemCollapsibleState.Expanded,
-            'severity'
+            'severity',
+            severity
           );
-          item.iconPath = new vscode.ThemeIcon(ICONS[severity] || 'circle-outline');
+          item.iconPath = new vscode.ThemeIcon(SEVERITY_ICONS[severity] || 'circle-outline');
+          item.tooltip = `${count} ${severity} risk finding(s)`;
           return item;
         });
     }
 
-    if (element.kind === 'severity') {
-      const severity = element.label?.toString().split(' ')[0].toLowerCase();
-      return (this.data.findings || [])
-        .filter((finding) => finding.severity === severity)
+    if (element.kind === 'severity' && element.severity) {
+      const areas = new Map<string, number>();
+      findings
+        .filter((finding) => finding.severity === element.severity)
+        .forEach((finding) => areas.set(finding.area, (areas.get(finding.area) || 0) + 1));
+
+      return Array.from(areas.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([area, count]) => {
+          const item = new RiskTreeItem(
+            `${area} (${count})`,
+            vscode.TreeItemCollapsibleState.Expanded,
+            'area',
+            element.severity,
+            area
+          );
+          item.iconPath = new vscode.ThemeIcon('folder');
+          return item;
+        });
+    }
+
+    if (element.kind === 'area' && element.severity && element.area) {
+      return findings
+        .filter((finding) => finding.severity === element.severity && finding.area === element.area)
+        .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.rule_id.localeCompare(b.rule_id))
         .map((finding) => {
           const item = new RiskTreeItem(
-            `${finding.title} - ${finding.file}:${finding.line}`,
+            finding.rule_id || finding.title,
             vscode.TreeItemCollapsibleState.None,
             'finding',
+            finding.severity,
+            finding.area,
             finding
           );
-          item.description = finding.rule_id;
-          item.iconPath = new vscode.ThemeIcon(ICONS[finding.severity] || 'warning');
-          item.tooltip = new vscode.MarkdownString(
-            `**${finding.title}**\n\n` +
-            `Severity: \`${finding.severity}\`\n\n` +
-            `File: \`${finding.file}:${finding.line}\`\n\n` +
-            `Suggestion: ${finding.suggestion}\n\n` +
-            (finding.evidence_snippet ? `Evidence:\n\n\`\`\`\n${finding.evidence_snippet}\n\`\`\`` : '')
-          );
+          item.description = `${finding.file}:${finding.line}`;
+          item.iconPath = new vscode.ThemeIcon(finding.control_source === 'llm' ? 'sparkle' : 'shield');
           item.command = {
             command: 'aiStackMapper.openRiskFinding',
             title: 'Open Risk Finding',
             arguments: [this.data!.root, finding],
           };
+          item.tooltip = this.buildFindingTooltip(finding);
           return item;
         });
     }
 
     return [];
   }
+
+  private buildFindingTooltip(finding: RiskFinding): vscode.MarkdownString {
+    const control = finding.recommended_control || finding.suggestion || 'No control available.';
+    const md = new vscode.MarkdownString(undefined, true);
+    md.appendMarkdown(`**${finding.rule_id}**\n\n`);
+    md.appendMarkdown(`Severity: \`${finding.severity}\`  \n`);
+    md.appendMarkdown(`Feature: \`${finding.feature || 'general'}\`  \n`);
+    md.appendMarkdown(`Source: \`${finding.source}\`  \n`);
+    md.appendMarkdown(`Control source: \`${finding.control_source}\`  \n`);
+    if (finding.llm_confidence) {
+      md.appendMarkdown(`LLM confidence: \`${finding.llm_confidence}\`  \n`);
+    }
+    md.appendMarkdown(`\n${finding.title}\n\n`);
+    if (finding.risk_explanation) {
+      md.appendMarkdown(`**Risk explanation:** ${finding.risk_explanation}\n\n`);
+    }
+    md.appendMarkdown(`**Recommended control:** ${control}`);
+    return md;
+  }
+
+  private messageItem(label: string): RiskTreeItem {
+    return new RiskTreeItem(label, vscode.TreeItemCollapsibleState.None, 'message');
+  }
+
+  private titleCase(value: string): string {
+    return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+  }
 }
+

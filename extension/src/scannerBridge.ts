@@ -97,7 +97,14 @@ export interface RiskFinding {
   title: string;
   suggestion: string;
   rule_id: string;
+  feature: string;
   source: string;
+  control_source: string;
+  risk_explanation?: string;
+  recommended_control?: string;
+  safer_code?: string;
+  llm_confidence?: string;
+  is_valid_risk?: boolean;
   evidence_snippet?: string;
 }
 
@@ -105,12 +112,16 @@ export interface RiskReportData {
   root: string;
   generated_at: string;
   scanned_files: number;
+  changed_only: boolean;
   fail_on: string;
   status: string;
   risk_scan_mode: string;
+  report_title: string;
+  llm_model: string;
   severity_counts: { [severity: string]: number };
   findings: RiskFinding[];
   skipped_files: string[];
+  llm_warnings: string[];
 }
 
 export interface RiskScanResult {
@@ -275,10 +286,14 @@ export class ScannerBridge {
 
   async scanRisks(workspaceRoot: string): Promise<RiskScanResult> {
     const cfg = vscode.workspace.getConfiguration('aiStackMapper');
+    const useLlm = cfg.get<boolean>('riskUseLLM', false);
     const failOn = cfg.get<string>('riskFailOn', 'high') || 'high';
+    const riskLlmMaxFindings = Math.max(1, cfg.get<number>('riskLlmMaxFindings', 25) || 25);
+    const riskLlmMinSeverity = cfg.get<string>('riskLlmMinSeverity', 'high') || 'high';
     const env: NodeJS.ProcessEnv = { ...process.env };
     const existing = env.PYTHONPATH ? `${env.PYTHONPATH}${path.delimiter}` : '';
     env.PYTHONPATH = `${existing}${this.bundledEnginePath}`;
+    env.AI_STACK_ENV_FILE = '';
 
     const markdownPath = path.join(workspaceRoot, 'AI_RISK_REPORT.md');
     const jsonPath = path.join(workspaceRoot, 'ai-risk-report.json');
@@ -293,7 +308,14 @@ export class ScannerBridge {
       jsonPath,
       '--fail-on',
       failOn,
+      '--no-fail',
     ];
+
+    if (useLlm) {
+      throw new Error(
+        'Risk LLM controls are not enabled in this Vault-local-agent package. Disable "aiStackMapper.riskUseLLM".'
+      );
+    }
 
     return new Promise((resolve, reject) => {
       let proc: cp.ChildProcessWithoutNullStreams;
