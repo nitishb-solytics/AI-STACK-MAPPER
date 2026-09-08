@@ -129,6 +129,10 @@ CONSTRUCTOR_REGISTRY = {
 # ---------------------------------------------------------------------------
 BASE_CLASS_REGISTRY = {
     "BaseTool": (CATEGORY_TOOL, "Custom Tool (subclasses BaseTool)"),
+    # Common application-level protocol used by local agent implementations
+    # (for example ``class SummarizeTool(AgentTool)``). The concrete subclass
+    # name is retained by the AST visitor, producing a distinct Vault tool.
+    "AgentTool": (CATEGORY_TOOL, "Agent Tool"),
     "StructuredTool": (CATEGORY_TOOL, "Custom Structured Tool"),
     "Chain": (CATEGORY_AGENT_FRAMEWORK, "Custom LangChain Chain"),
     "Runnable": (CATEGORY_AGENT_FRAMEWORK, "Custom LangChain Runnable"),
@@ -299,4 +303,3 @@ JS_PACKAGE_PREFIX_FALLBACKS = [
 
 # JS packages that are inherently self-hosted (mirrors SELF_HOSTED_PACKAGES).
 JS_SELF_HOSTED_PACKAGES = {"ollama"}
-

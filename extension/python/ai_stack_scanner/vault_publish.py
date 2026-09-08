@@ -44,6 +44,7 @@ def agent_external_id(identity: str, agent_key: str) -> str:
 def agent_content_hash(agent: Dict[str, Any]) -> str:
     fingerprint = {
         "files": agent.get("files") or [],
+        "dependency_files": agent.get("dependency_files") or [],
         "components": agent.get("components") or {},
         "evidence": agent.get("evidence") or [],
     }
@@ -66,6 +67,7 @@ def build_local_agents_payload(
             "name": agent.get("name"),
             "score": agent.get("score"),
             "files": agent.get("files") or [],
+            "dependency_files": agent.get("dependency_files") or [],
             "components": agent.get("components") or {},
             "evidence": agent.get("evidence") or [],
         }
@@ -84,7 +86,7 @@ def build_vault_payload(
     agents = stack.get("local_agents") or []
     return {
         "provider_key": "local_agent",
-        "source_type": "scanner_report",
+        "source_type": "vscode_extension",
         "repo_name": os.path.basename(repo_root.replace("\\", "/").rstrip("/")) or repo_root,
         "repo_path": repo_root,
         "repo_url": repo_url or "",

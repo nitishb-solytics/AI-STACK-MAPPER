@@ -47,6 +47,7 @@ export interface LocalAgentData {
   name: string;
   score: number;
   files: string[];
+  dependency_files?: string[];
   components: { [bucket: string]: string[] };
   evidence: Array<{
     category: string;
@@ -55,6 +56,9 @@ export interface LocalAgentData {
     line: number;
     match_type: string;
     detail: string;
+    package?: string;
+    attribution?: 'direct_path' | 'local_import';
+    import_depth?: number;
   }>;
 }
 
@@ -65,6 +69,7 @@ export interface VaultLocalAgentPayload {
   name: string;
   score: number;
   files: string[];
+  dependency_files?: string[];
   components: { [bucket: string]: string[] };
   evidence: LocalAgentData['evidence'];
 }

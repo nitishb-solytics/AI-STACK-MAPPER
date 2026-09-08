@@ -3,6 +3,11 @@
 VS Code extension POC for discovering local AI agents in a repository and publishing the
 discovery inventory into MRM Vault AI Governance.
 
+## Documentation
+
+- [Internal Local Agent-to-Vault Implementation and Setup Guide](docs/INTERNAL_LOCAL_AGENT_VAULT_IMPLEMENTATION.md) is for Vault engineering, DevOps, database, frontend, and QA teams.
+- [AI Stack Mapper Client Quick Start](docs/CLIENT_AI_STACK_MAPPER_QUICK_START.md) is the shorter guide to give an extension user or client.
+
 This extension does not onboard agents directly. It stages discovered local agents in Vault.
 Vault users then open AIAgent → Auto Discovery → Agent Discovery in Local, review the agents,
 and import only the selected agent(s).
@@ -44,7 +49,7 @@ The publish command asks for:
 
 - Vault backend base URL, for example `http://127.0.0.1:8000`
 - Vault org header, for example `ai-gov-3`
-- Vault JWT token
+- Vault access token (`Bearer <token>`; entering only the token is also supported)
 - optional repo URL and branch metadata
 
 ## Vault backend requirement

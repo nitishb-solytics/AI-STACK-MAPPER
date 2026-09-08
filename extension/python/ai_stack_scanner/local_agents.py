@@ -13,6 +13,7 @@ import re
 from collections import defaultdict
 from typing import Any, Dict, Iterable, List
 
+from .import_graph import reachable_imports
 from .models import (
     CATEGORY_AGENT_FRAMEWORK,
     CATEGORY_LLM,
@@ -184,7 +185,17 @@ def _iter_component_occurrences(stack: dict) -> Iterable[tuple[str, dict, dict]]
                 yield category, component, occurrence
 
 
-def infer_local_agents(stack: dict) -> List[Dict[str, Any]]:
+def infer_local_agents(
+    stack: dict,
+    import_graph: dict[str, set[str]] | None = None,
+    max_import_depth: int = 4,
+) -> List[Dict[str, Any]]:
+    """Infer agents and attribute components through bounded local imports.
+
+    Direct path ownership establishes the agents. Once established, an agent
+    also receives components found in repository-local modules reachable from
+    its files. Evidence owned by another named agent is never borrowed.
+    """
     grouped: dict[str, dict] = {}
     bucket_names = {
         CATEGORY_LLM: "llm_providers",
@@ -222,12 +233,72 @@ def infer_local_agents(stack: dict) -> List[Dict[str, Any]]:
                 {
                     "category": category,
                     "component": component.get("name"),
+                    "package": component.get("package"),
                     "file": rel_file,
                     "line": occurrence.get("line"),
                     "match_type": occurrence.get("match_type"),
                     "detail": occurrence.get("detail"),
+                    "attribution": "direct_path",
+                    "import_depth": 0,
                 }
             )
+
+    if import_graph:
+        occurrences_by_file: dict[str, list[tuple[str, dict, dict]]] = defaultdict(list)
+        for category, component, occurrence in _iter_component_occurrences(stack):
+            rel_file = (occurrence.get("file") or "").replace("\\", "/")
+            if rel_file:
+                occurrences_by_file[rel_file].append((category, component, occurrence))
+
+        for key, row in grouped.items():
+            depths = reachable_imports(import_graph, row["files"], max_depth=max_import_depth)
+            seen = {
+                (
+                    evidence.get("category"),
+                    evidence.get("component"),
+                    (evidence.get("file") or "").replace("\\", "/"),
+                    evidence.get("line"),
+                )
+                for evidence in row["evidence"]
+            }
+            dependency_files = set()
+            for rel_file, depth in sorted(depths.items(), key=lambda item: (item[1], item[0])):
+                if depth == 0:
+                    continue
+                file_owner = infer_agent_from_file(rel_file)
+                if file_owner and agent_key(file_owner) != key:
+                    continue
+                for category, component, occurrence in occurrences_by_file.get(rel_file, []):
+                    bucket = bucket_names.get(category)
+                    if not bucket or not component.get("name"):
+                        continue
+                    row["components"][bucket].add(component["name"])
+                    evidence_key = (
+                        category,
+                        component.get("name"),
+                        rel_file,
+                        occurrence.get("line"),
+                    )
+                    if evidence_key in seen:
+                        continue
+                    seen.add(evidence_key)
+                    dependency_files.add(rel_file)
+                    row["occurrences"] += 1
+                    if len(row["evidence"]) < 100:
+                        row["evidence"].append(
+                            {
+                                "category": category,
+                                "component": component.get("name"),
+                                "package": component.get("package"),
+                                "file": rel_file,
+                                "line": occurrence.get("line"),
+                                "match_type": occurrence.get("match_type"),
+                                "detail": occurrence.get("detail"),
+                                "attribution": "local_import",
+                                "import_depth": depth,
+                            }
+                        )
+            row["dependency_files"] = dependency_files
 
     agents = []
     for row in grouped.values():
@@ -239,6 +310,7 @@ def infer_local_agents(stack: dict) -> List[Dict[str, Any]]:
                 "name": row["name"],
                 "score": score,
                 "files": sorted(row["files"]),
+                "dependency_files": sorted(row.get("dependency_files") or []),
                 "components": component_summary,
                 "evidence": row["evidence"],
             }

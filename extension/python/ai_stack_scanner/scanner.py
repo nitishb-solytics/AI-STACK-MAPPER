@@ -6,6 +6,7 @@ from typing import List
 from .models import ScanResult
 from .ast_visitor import scan_source
 from .config_scanner import scan_dependency_file, scan_mcp_config, scan_env_file, scan_js_dependency_file
+from .import_graph import build_python_import_graph
 from .local_agents import infer_local_agents, scan_prompt_source
 from .registry import MCP_CONFIG_FILENAMES, DEPENDENCY_FILES
 
@@ -34,6 +35,7 @@ def scan_directory(root: str, scanner_mode: str = "static") -> ScanResult:
         scanned_files=0,
         scanner_mode=scanner_mode,
     )
+    python_sources = {}
 
     for path in _iter_files(root):
         rel = os.path.relpath(path, root)
@@ -44,6 +46,7 @@ def scan_directory(root: str, scanner_mode: str = "static") -> ScanResult:
             if fn.endswith(".py"):
                 with open(path, "r", encoding="utf-8", errors="ignore") as f:
                     source = f.read()
+                python_sources[rel] = source
                 findings = scan_source(rel, source)
                 findings.extend(scan_prompt_source(rel, source))
                 result.scanned_files += 1
@@ -75,5 +78,8 @@ def scan_directory(root: str, scanner_mode: str = "static") -> ScanResult:
         for category, name, package, occurrence in findings:
             result.add(category, name, package, occurrence)
 
-    result.local_agents = infer_local_agents(result.to_dict())
+    result.local_agents = infer_local_agents(
+        result.to_dict(),
+        import_graph=build_python_import_graph(python_sources),
+    )
     return result

@@ -13,12 +13,12 @@ function getWorkspaceRoot(): string | undefined {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 
-function normalizeJwtHeader(token: string): string {
+function normalizeAuthorizationHeader(token: string): string {
   const trimmed = token.trim();
   if (/^(JWT|Bearer)\s+/i.test(trimmed)) {
     return trimmed;
   }
-  return `JWT ${trimmed}`;
+  return `Bearer ${trimmed}`;
 }
 
 async function postJson(url: string, headers: Record<string, string>, body: unknown): Promise<any> {
@@ -111,7 +111,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const storedToken = await context.secrets.get(VAULT_TOKEN_SECRET);
     const token = await vscode.window.showInputBox({
-      prompt: 'Vault JWT token. Paste token only, or full "JWT <token>" value.',
+      prompt: 'Vault access token. Paste token only, or full "Bearer <token>" value.',
       value: storedToken || '',
       password: true,
       ignoreFocusOut: true,
@@ -149,7 +149,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const result = await postJson(
         endpoint,
         {
-          Authorization: normalizeJwtHeader(token),
+          Authorization: normalizeAuthorizationHeader(token),
           Org: org,
         },
         payload

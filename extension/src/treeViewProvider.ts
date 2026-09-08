@@ -115,13 +115,18 @@ export class AiStackTreeProvider implements vscode.TreeDataProvider<AiStackTreeI
           undefined,
           agent
         );
-        item.description = `${agent.files.length} file(s)`;
+        const dependencyCount = agent.dependency_files?.length || 0;
+        item.description = dependencyCount
+          ? `${agent.files.length} direct + ${dependencyCount} imported file(s)`
+          : `${agent.files.length} file(s)`;
         item.iconPath = new vscode.ThemeIcon('robot');
         const parts = Object.entries(agent.components || {})
           .filter(([, values]) => values.length > 0)
           .map(([bucket, values]) => `${bucket}: ${values.join(', ')}`);
         item.tooltip = new vscode.MarkdownString(
-          `**${agent.name}**\n\nFiles: ${agent.files.length}\n\n${parts.join('\n\n') || 'No mapped components'}`
+          `**${agent.name}**\n\nDirect files: ${agent.files.length}\n\n` +
+          `Imported dependency files with AI evidence: ${dependencyCount}\n\n` +
+          `${parts.join('\n\n') || 'No mapped components'}`
         );
         return item;
       });
@@ -134,7 +139,9 @@ export class AiStackTreeProvider implements vscode.TreeDataProvider<AiStackTreeI
           vscode.TreeItemCollapsibleState.None,
           'occurrence'
         );
-        item.description = ev.category;
+        item.description = ev.attribution === 'local_import'
+          ? `${ev.category} · imported (depth ${ev.import_depth})`
+          : ev.category;
         item.iconPath = new vscode.ThemeIcon('file-code');
         item.command = {
           command: 'aiStackMapper.openOccurrence',
