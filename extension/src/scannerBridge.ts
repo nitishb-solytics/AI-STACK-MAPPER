@@ -59,6 +59,7 @@ export interface LocalAgentData {
     package?: string;
     attribution?: 'direct_path' | 'local_import';
     import_depth?: number;
+    ownership_confidence?: 'high' | 'medium' | 'low';
   }>;
 }
 

@@ -91,6 +91,23 @@ PROMPT_WORDS = (
     "guideline",
 )
 INFRA_TOP_LEVEL = {"api", "apis", "db", "database", "databases", "shared", "plugin", "plugins", "pkg", "packages"}
+IMPORT_ATTRIBUTION_BARRIER_PARTS = {
+    "tests",
+    "test",
+    "__tests__",
+    "migrations",
+    "versions",
+    "telemetry",
+    "observability",
+    "monitoring",
+    "instrumentation",
+}
+IMPORT_ATTRIBUTION_BARRIER_FILES = {
+    "logging.py",
+    "logger.py",
+    "tracing.py",
+    "metrics.py",
+}
 
 
 def display_name(value: str) -> str:
@@ -102,6 +119,20 @@ def display_name(value: str) -> str:
 
 def agent_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", display_name(value).lower()).strip("-") or "codebase"
+
+
+def _is_import_attribution_barrier(rel_path: str) -> bool:
+    """True for support modules whose imports do not describe agent capability.
+
+    A logging module importing ``transformers`` to silence its logger must not
+    make every caller a Hugging Face agent. The module is also a traversal
+    barrier, preventing broad utility dependencies from polluting ownership.
+    """
+    parts = [part.lower() for part in rel_path.replace("\\", "/").split("/") if part]
+    return bool(
+        set(parts) & IMPORT_ATTRIBUTION_BARRIER_PARTS
+        or (parts and parts[-1] in IMPORT_ATTRIBUTION_BARRIER_FILES)
+    )
 
 
 def infer_agent_from_file(rel_path: str) -> str | None:
@@ -152,7 +183,8 @@ def scan_prompt_source(rel_path: str, source: str) -> list[tuple[str, str, str, 
     has_prompt_path = "prompt" in lower_path or "guideline" in lower_path
     has_prompt_code = bool(
         re.search(r"\b(chatprompttemplate|prompttemplate|system_prompt|human_prompt)\b", lower_source)
-        or re.search(r"\b[a-zA-Z_]*(prompt|message|template)[a-zA-Z_]*\s*=", source)
+        # Generic ``message =`` state/error/logging variables are not prompts.
+        or re.search(r"\b[a-zA-Z_]*(prompt|template)[a-zA-Z_]*\s*=", source)
     )
     if not has_prompt_path and not has_prompt_code:
         return []
@@ -240,10 +272,20 @@ def infer_local_agents(
                     "detail": occurrence.get("detail"),
                     "attribution": "direct_path",
                     "import_depth": 0,
+                    "ownership_confidence": "high",
                 }
             )
 
     if import_graph:
+        attribution_graph = {
+            source: {
+                dependency
+                for dependency in dependencies
+                if not _is_import_attribution_barrier(dependency)
+            }
+            for source, dependencies in import_graph.items()
+            if not _is_import_attribution_barrier(source)
+        }
         occurrences_by_file: dict[str, list[tuple[str, dict, dict]]] = defaultdict(list)
         for category, component, occurrence in _iter_component_occurrences(stack):
             rel_file = (occurrence.get("file") or "").replace("\\", "/")
@@ -251,7 +293,9 @@ def infer_local_agents(
                 occurrences_by_file[rel_file].append((category, component, occurrence))
 
         for key, row in grouped.items():
-            depths = reachable_imports(import_graph, row["files"], max_depth=max_import_depth)
+            depths = reachable_imports(
+                attribution_graph, row["files"], max_depth=max_import_depth
+            )
             seen = {
                 (
                     evidence.get("category"),
@@ -296,6 +340,7 @@ def infer_local_agents(
                                 "detail": occurrence.get("detail"),
                                 "attribution": "local_import",
                                 "import_depth": depth,
+                                "ownership_confidence": "medium" if depth == 1 else "low",
                             }
                         )
             row["dependency_files"] = dependency_files
