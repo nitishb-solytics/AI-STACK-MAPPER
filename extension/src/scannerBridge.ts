@@ -58,10 +58,29 @@ export interface LocalAgentData {
   }>;
 }
 
-export interface RiskScanResult {
-  markdownPath: string;
-  jsonPath: string;
-  data: RiskReportData;
+export interface VaultLocalAgentPayload {
+  external_id: string;
+  content_hash: string;
+  key: string;
+  name: string;
+  score: number;
+  files: string[];
+  components: { [bucket: string]: string[] };
+  evidence: LocalAgentData['evidence'];
+}
+
+export interface VaultPublishPayload {
+  source_type: string;
+  provider_key: string;
+  repo_name: string;
+  repo_path: string;
+  repo_url: string;
+  branch: string;
+  stack: ScanData;
+  risk: Record<string, never>;
+  local_agents: VaultLocalAgentPayload[];
+  discover: false;
+  include_risks: boolean;
 }
 
 export interface StackScanResult {
@@ -69,43 +88,6 @@ export interface StackScanResult {
   jsonPath: string;
   data: ScanData;
 }
-
-export interface RiskFinding {
-  severity: string;
-  area: string;
-  file: string;
-  line: number;
-  title: string;
-  suggestion: string;
-  rule_id: string;
-  feature: string;
-  source: string;
-  control_source: string;
-  risk_explanation?: string;
-  recommended_control?: string;
-  safer_code?: string;
-  llm_confidence?: string;
-  is_valid_risk?: boolean;
-  evidence_snippet?: string;
-}
-
-export interface RiskReportData {
-  root: string;
-  generated_at: string;
-  scanned_files: number;
-  changed_only: boolean;
-  fail_on: string;
-  status: string;
-  risk_scan_mode: string;
-  report_title: string;
-  llm_model: string;
-  severity_counts: { [severity: string]: number };
-  findings: RiskFinding[];
-  skipped_files: string[];
-  llm_warnings: string[];
-}
-
-export const LLM_API_KEY_SECRET = "aiStackMapper.llmApiKey";
 
 /**
  * Spawns the bundled `ai_stack_scanner` Python package as a subprocess.
@@ -127,9 +109,6 @@ export class ScannerBridge {
   }
 
   async scan(workspaceRoot: string): Promise<StackScanResult> {
-    const cfg = vscode.workspace.getConfiguration('aiStackMapper');
-    const enrich = cfg.get<boolean>('enrichWithLLM', false);
-
     const env: NodeJS.ProcessEnv = { ...process.env };
     const existing = env.PYTHONPATH ? `${env.PYTHONPATH}${path.delimiter}` : '';
     env.PYTHONPATH = `${existing}${this.bundledEnginePath}`;
@@ -157,28 +136,6 @@ export class ScannerBridge {
       '--json-output',
       jsonPath,
     ];
-
-    if (enrich) {
-      const apiKey = await this.secrets.get(LLM_API_KEY_SECRET);
-      if (!apiKey) {
-        throw new Error(
-          'AI enrichment is enabled ("aiStackMapper.enrichWithLLM") but no API key is set. ' +
-            'Run "AI Stack: Set LLM API Key" first, or disable enrichment in Settings.'
-        );
-      }
-      // Passed via env, never as a CLI arg, so the key never shows up in a
-      // process listing (e.g. `ps`/Task Manager).
-      env.AI_STACK_LLM_API_KEY = apiKey;
-      const baseUrl = cfg.get<string>('llmBaseUrl', '');
-      if (baseUrl) {
-        env.AI_STACK_LLM_BASE_URL = baseUrl;
-      }
-      const model = cfg.get<string>('llmModel', '');
-      if (model) {
-        env.AI_STACK_LLM_MODEL = model;
-      }
-      args.push('--enrich');
-    }
 
     return new Promise((resolve, reject) => {
       let proc: cp.ChildProcessWithoutNullStreams;
@@ -219,58 +176,35 @@ export class ScannerBridge {
     });
   }
 
-  async scanRisks(workspaceRoot: string): Promise<RiskScanResult> {
-    const cfg = vscode.workspace.getConfiguration('aiStackMapper');
-    const useLlm = cfg.get<boolean>('riskUseLLM', false);
-    const failOn = cfg.get<string>('riskFailOn', 'high') || 'high';
-    const riskLlmMaxFindings = Math.max(1, cfg.get<number>('riskLlmMaxFindings', 25) || 25);
-    const riskLlmMinSeverity = cfg.get<string>('riskLlmMinSeverity', 'high') || 'high';
-
+  /**
+   * Builds the Vault codebase-discovery payload (including per-agent
+   * `external_id`/`content_hash`) via the shared `ai_stack_scanner.vault_publish`
+   * Python module, so every discovery entry point (extension, local-path CLI,
+   * future GitHub-fetch job) derives agent identity identically.
+   */
+  async buildVaultPayload(
+    workspaceRoot: string,
+    stackJsonPath: string,
+    options: { repoUrl?: string; branch?: string; selectedKeys?: string[] }
+  ): Promise<VaultPublishPayload> {
     const env: NodeJS.ProcessEnv = { ...process.env };
     const existing = env.PYTHONPATH ? `${env.PYTHONPATH}${path.delimiter}` : '';
     env.PYTHONPATH = `${existing}${this.bundledEnginePath}`;
-    env.AI_STACK_ENV_FILE = '';
-
-    const markdownPath = path.join(workspaceRoot, 'AI_RISK_REPORT.md');
-    const jsonPath = path.join(workspaceRoot, 'ai-risk-report.json');
 
     const args = [
       '-m',
-      'ai_stack_scanner.risk_cli',
-      '--path',
+      'ai_stack_scanner.vault_publish',
+      '--repo-root',
       workspaceRoot,
-      '--report-title',
-      'AI Risk Report',
-      '--markdown-output',
-      markdownPath,
-      '--json-output',
-      jsonPath,
-      '--fail-on',
-      failOn,
-      '--no-fail',
+      '--stack-json',
+      stackJsonPath,
+      '--repo-url',
+      options.repoUrl || '',
+      '--branch',
+      options.branch || '',
+      '--selected-keys',
+      (options.selectedKeys || []).join(','),
     ];
-
-    if (useLlm) {
-      const apiKey = await this.secrets.get(LLM_API_KEY_SECRET);
-      if (!apiKey) {
-        throw new Error(
-          'Risk LLM controls are enabled ("aiStackMapper.riskUseLLM") but no API key is set. ' +
-            'Run "AI Stack: Set LLM API Key" first, or disable risk LLM controls in Settings.'
-        );
-      }
-      env.AI_STACK_LLM_API_KEY = apiKey;
-      const baseUrl = cfg.get<string>('llmBaseUrl', '');
-      if (baseUrl) {
-        env.AI_STACK_LLM_BASE_URL = baseUrl;
-      }
-      const model = cfg.get<string>('llmModel', '');
-      if (model) {
-        env.AI_STACK_LLM_MODEL = model;
-      }
-      args.push('--llm-risk-control');
-      args.push('--risk-llm-max-findings', String(riskLlmMaxFindings));
-      args.push('--risk-llm-min-severity', riskLlmMinSeverity);
-    }
 
     return new Promise((resolve, reject) => {
       let proc: cp.ChildProcessWithoutNullStreams;
@@ -281,7 +215,9 @@ export class ScannerBridge {
         return;
       }
 
+      let stdout = '';
       let stderr = '';
+      proc.stdout.on('data', (d) => (stdout += d.toString()));
       proc.stderr.on('data', (d) => (stderr += d.toString()));
 
       proc.on('error', (err) => {
@@ -294,19 +230,15 @@ export class ScannerBridge {
       });
 
       proc.on('close', (code) => {
-        void (async () => {
-          if (code !== 0) {
-          reject(new Error(`Risk scanner exited with code ${code}.\n${stderr}`));
+        if (code !== 0) {
+          reject(new Error(`Vault payload build exited with code ${code}.\n${stderr}`));
           return;
-          }
-          try {
-            const raw = await fs.readFile(jsonPath, 'utf8');
-            const data = JSON.parse(raw) as RiskReportData;
-            resolve({ markdownPath, jsonPath, data });
-          } catch (err: any) {
-            reject(new Error(`Risk scanner completed but could not read ${path.basename(jsonPath)}: ${err.message}`));
-          }
-        })();
+        }
+        try {
+          resolve(JSON.parse(stdout) as VaultPublishPayload);
+        } catch (err: any) {
+          reject(new Error(`Could not parse Vault payload output: ${err.message}`));
+        }
       });
     });
   }

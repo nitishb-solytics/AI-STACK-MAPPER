@@ -1,7 +1,7 @@
 {
   "name": "ai-stack-mapper",
   "displayName": "AI Stack Mapper",
-  "description": "Map every LLM, MCP server, Tool and Agent framework used across your codebase.",
+  "description": "Discover local AI agents in a codebase and publish them to Vault AI Governance Auto Discovery.",
   "version": "0.1.0",
   "publisher": "local-dev",
   "engines": {
@@ -24,22 +24,9 @@
         "title": "AI Stack: Export Markdown Report"
       },
       {
-        "command": "aiStackMapper.scanRisks",
-        "title": "AI Risk: Scan Workspace",
-        "icon": "$(shield)"
-      },
-      {
         "command": "aiStackMapper.publishToVault",
-        "title": "AI Stack: Publish Discovery to Vault",
+        "title": "AI Stack: Publish Local Agent Discovery to Vault",
         "icon": "$(cloud-upload)"
-      },
-      {
-        "command": "aiStackMapper.setLlmApiKey",
-        "title": "AI Stack: Set LLM API Key"
-      },
-      {
-        "command": "aiStackMapper.clearLlmApiKey",
-        "title": "AI Stack: Clear LLM API Key"
       }
     ],
     "viewsContainers": {
@@ -56,10 +43,6 @@
         {
           "id": "aiStackMapperView",
           "name": "Components"
-        },
-        {
-          "id": "aiStackMapperRiskView",
-          "name": "Risks"
         }
       ]
     },
@@ -71,13 +54,8 @@
           "group": "navigation"
         },
         {
-          "command": "aiStackMapper.scanRisks",
-          "when": "view == aiStackMapperView || view == aiStackMapperRiskView",
-          "group": "navigation"
-        },
-        {
           "command": "aiStackMapper.publishToVault",
-          "when": "view == aiStackMapperView || view == aiStackMapperRiskView",
+          "when": "view == aiStackMapperView",
           "group": "navigation"
         }
       ]
@@ -94,44 +72,6 @@
           "type": "boolean",
           "default": false,
           "description": "Automatically re-scan (debounced) when a relevant file is saved."
-        },
-        "aiStackMapper.enrichWithLLM": {
-          "type": "boolean",
-          "default": false,
-          "description": "Optional: ask an LLM to infer each component's likely purpose/usage/expected output. OFF by default. Requires an API key set via 'AI Stack: Set LLM API Key'. Sends only code-derived context (file:line, enclosing function/class name + docstring, prompt text) to the configured LLM endpoint -- never full source files or secret values."
-        },
-        "aiStackMapper.llmBaseUrl": {
-          "type": "string",
-          "default": "",
-          "description": "OpenAI-compatible chat-completions base URL for optional AI enrichment and risk controls (default: https://api.openai.com/v1). Point this at a self-hosted/on-prem endpoint (vLLM, Ollama, internal Azure OpenAI, LiteLLM proxy) to avoid sending code context to a public cloud LLM."
-        },
-        "aiStackMapper.llmModel": {
-          "type": "string",
-          "default": "gpt-4o-mini",
-          "description": "Model name to request for optional AI enrichment and risk controls."
-        },
-        "aiStackMapper.riskUseLLM": {
-          "type": "boolean",
-          "default": false,
-          "description": "Optional: use the configured LLM to generate controls/remediation for statically detected code assessment risks. OFF by default."
-        },
-        "aiStackMapper.riskFailOn": {
-          "type": "string",
-          "default": "high",
-          "enum": ["info", "low", "medium", "high", "critical"],
-          "description": "Severity threshold used in the generated AI risk report status."
-        },
-        "aiStackMapper.riskLlmMaxFindings": {
-          "type": "number",
-          "default": 25,
-          "minimum": 1,
-          "description": "Maximum number of code assessment risk findings sent to the LLM for control generation."
-        },
-        "aiStackMapper.riskLlmMinSeverity": {
-          "type": "string",
-          "default": "high",
-          "enum": ["info", "low", "medium", "high", "critical"],
-          "description": "Minimum risk severity sent to the LLM for control generation."
         },
         "aiStackMapper.vaultBaseUrl": {
           "type": "string",
