@@ -176,42 +176,41 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!token) return;
     await context.secrets.store(VAULT_TOKEN_SECRET, token);
 
-    // Repo URL decides the Vault `external_id`, so a value the user has already
-    // published under wins over whatever git currently reports -- re-deriving it
-    // would silently re-key agents that were staged under the earlier value.
-    // Branch is metadata only, so there the live checkout is the better answer.
+    // Repo URL and branch are resolved, never typed. The URL is the input to
+    // every agent's Vault `external_id`, so a free-text box makes identity a
+    // function of what someone happened to paste: the same repository entered
+    // as `.git`, without it, or in a different case stages a second copy of
+    // every agent. Resolving from the checkout removes that entire class of
+    // mistake. `vaultRepoUrl`/`vaultBranch` remain as deliberate pins for the
+    // rare case the remote is not the right identity; the remembered values
+    // are only a fallback for when git is unavailable.
     const [detectedUrl, detectedBranch] = await Promise.all([detectRepoUrl(root), detectBranch(root)]);
-    const repoUrl = await vscode.window.showInputBox({
-      prompt: 'Git repository URL. Determines the Vault agent identity — keep it consistent across publishes.',
-      value:
-        explicitSetting(cfg, 'vaultRepoUrl') ||
-        context.workspaceState.get<string>(LAST_REPO_URL) ||
-        detectedUrl,
-      ignoreFocusOut: true,
-    });
-    if (repoUrl === undefined) return; // Escape cancels; "" is a deliberate choice
+    const pinnedUrl = explicitSetting(cfg, 'vaultRepoUrl');
+    const pinnedBranch = explicitSetting(cfg, 'vaultBranch');
+    const repoUrl = pinnedUrl || detectedUrl || context.workspaceState.get<string>(LAST_REPO_URL) || '';
+    const branch = pinnedBranch || detectedBranch || context.workspaceState.get<string>(LAST_BRANCH) || '';
 
-    const branch = await vscode.window.showInputBox({
-      prompt: 'Optional Git branch to store as metadata',
-      value:
-        explicitSetting(cfg, 'vaultBranch') ||
-        detectedBranch ||
-        context.workspaceState.get<string>(LAST_BRANCH) ||
-        '',
-      ignoreFocusOut: true,
-    });
-    if (branch === undefined) return;
-
-    if (!repoUrl.trim()) {
-      vscode.window.showWarningMessage(
-        'AI Stack Mapper: publishing without a repository URL. Agent identity falls back to this machine’s local path, ' +
-          'so publishing the same repo from another checkout will stage duplicate agents in Vault.'
-      );
-    }
+    const originLabel = pinnedUrl
+      ? 'pinned by the aiStackMapper.vaultRepoUrl setting'
+      : detectedUrl
+        ? 'from this checkout’s git origin'
+        : 'remembered from the last publish';
+    const confirmation = repoUrl
+      ? `Repository: ${repoUrl}\nBranch: ${branch || '(none)'}\n\nIdentity is ${originLabel}.`
+      : 'No git remote was found and no repository URL is pinned.\n\n' +
+        'Agent identity will fall back to this machine’s local path, so publishing the same ' +
+        'repository from another checkout will stage a duplicate set of agents in Vault.\n\n' +
+        'Set aiStackMapper.vaultRepoUrl, or add a git remote, to give this repository a stable identity.';
+    const proceed = await vscode.window.showInformationMessage(
+      repoUrl ? 'Publish local agent discovery to Vault?' : 'Publish without a stable repository identity?',
+      { modal: true, detail: confirmation },
+      repoUrl ? 'Publish' : 'Publish anyway'
+    );
+    if (!proceed) return;
 
     // Remembered now rather than after a successful POST: the common failure is
-    // "Vault is not up yet", and retyping every field to retry is the friction
-    // this exists to remove. Each value is pre-filled and editable next time.
+    // "Vault is not up yet", and re-entering every field to retry is the
+    // friction this exists to remove.
     await context.globalState.update(LAST_BASE_URL, baseUrl);
     await context.globalState.update(LAST_ORG, org);
     await context.workspaceState.update(LAST_REPO_URL, repoUrl);

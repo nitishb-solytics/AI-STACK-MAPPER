@@ -2,7 +2,7 @@
   "name": "ai-stack-mapper",
   "displayName": "AI Stack Mapper",
   "description": "Discover local AI agents in a codebase and publish them to Vault AI Governance Auto Discovery.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "local-dev",
   "license": "UNLICENSED",
   "repository": {
@@ -126,12 +126,12 @@
         "aiStackMapper.vaultRepoUrl": {
           "type": "string",
           "default": "",
-          "description": "Pins the repository URL used to publish. This value determines each agent's Vault external_id, so setting it guarantees a stable identity across machines and checkouts. Leave empty to use the last published value, falling back to the repo's git origin remote."
+          "markdownDescription": "Pins the repository URL used when publishing. This value determines each agent's Vault `external_id`. Leave empty to resolve it from the checkout's git `origin` remote, which is the recommended setting — the publish command does not accept a typed URL, because inconsistent spellings stage duplicate agents. Set this only when the git remote is not the right identity."
         },
         "aiStackMapper.vaultBranch": {
           "type": "string",
           "default": "",
-          "description": "Pins the branch metadata sent to Vault. Leave empty to use the current git branch. Branch is metadata only and does not affect agent identity."
+          "markdownDescription": "Pins the branch metadata sent to Vault. Leave empty to use the current git branch. Branch is metadata only and does not affect agent identity."
         }
       }
     }
