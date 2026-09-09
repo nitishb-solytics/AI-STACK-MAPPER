@@ -1,16 +1,70 @@
 import * as vscode from 'vscode';
+import * as cp from 'child_process';
 import * as path from 'path';
+import { promisify } from 'util';
 import { ScannerBridge, Occurrence, RiskFinding } from './scannerBridge';
 import { AiStackTreeProvider } from './treeViewProvider';
 import { RiskTreeProvider } from './riskTreeViewProvider';
+
+const execFile = promisify(cp.execFile);
 
 let statusBarItem: vscode.StatusBarItem;
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
 const VAULT_TOKEN_SECRET = 'aiStackMapper.vaultToken';
+// Last values actually used for a publish. The Vault instance (base URL, org)
+// is usually the same across repos so it lives in globalState; the repo URL and
+// branch are per-repo and live in workspaceState.
+const LAST_BASE_URL = 'aiStackMapper.lastBaseUrl';
+const LAST_ORG = 'aiStackMapper.lastOrg';
+const LAST_REPO_URL = 'aiStackMapper.lastRepoUrl';
+const LAST_BRANCH = 'aiStackMapper.lastBranch';
 
 function getWorkspaceRoot(): string | undefined {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+}
+
+/**
+ * Value the user explicitly configured for `key`, ignoring the default declared
+ * in package.json. `WorkspaceConfiguration.get` cannot distinguish "the user
+ * chose this" from "this is the shipped default", and that difference decides
+ * whether a configured setting should win over the last value actually used.
+ */
+function explicitSetting(cfg: vscode.WorkspaceConfiguration, key: string): string {
+  const info = cfg.inspect<string>(key);
+  return (info?.workspaceFolderValue ?? info?.workspaceValue ?? info?.globalValue ?? '').trim();
+}
+
+async function gitValue(root: string, args: string[]): Promise<string> {
+  try {
+    const { stdout } = await execFile('git', ['-C', root, ...args], { timeout: 5000 });
+    return stdout.trim();
+  } catch {
+    return '';
+  }
+}
+
+/** Strip `//user:password@` credentials; leaves `git@host:path` SSH URLs alone. */
+function stripUrlCredentials(url: string): string {
+  return url.replace(/^([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^/@]*:[^/@]*@/, '$1');
+}
+
+/**
+ * Origin remote of the scanned repo. This is the stable input to the Vault
+ * `external_id`, so deriving it from git rather than asking the user to retype
+ * it each publish is what stops one repo staging duplicate agents.
+ */
+async function detectRepoUrl(root: string): Promise<string> {
+  const url =
+    (await gitValue(root, ['remote', 'get-url', 'origin'])) ||
+    // `remote get-url` needs git >= 2.7; fall back for older clients.
+    (await gitValue(root, ['config', '--get', 'remote.origin.url']));
+  return stripUrlCredentials(url);
+}
+
+async function detectBranch(root: string): Promise<string> {
+  const branch = await gitValue(root, ['rev-parse', '--abbrev-ref', 'HEAD']);
+  return branch === 'HEAD' ? '' : branch; // detached HEAD has no branch name
 }
 
 function normalizeAuthorizationHeader(token: string): string {
@@ -49,7 +103,7 @@ async function postJson(url: string, headers: Record<string, string>, body: unkn
 export function activate(context: vscode.ExtensionContext): void {
   const treeProvider = new AiStackTreeProvider();
   const riskTreeProvider = new RiskTreeProvider();
-  const bridge = new ScannerBridge(context.extensionPath, context.secrets);
+  const bridge = new ScannerBridge(context.extensionPath);
 
   context.subscriptions.push(vscode.window.registerTreeDataProvider('aiStackMapperView', treeProvider));
   context.subscriptions.push(vscode.window.registerTreeDataProvider('aiStackMapperRiskView', riskTreeProvider));
@@ -96,14 +150,17 @@ export function activate(context: vscode.ExtensionContext): void {
     const cfg = vscode.workspace.getConfiguration('aiStackMapper');
     const baseUrl = await vscode.window.showInputBox({
       prompt: 'Vault backend base URL',
-      value: cfg.get<string>('vaultBaseUrl', 'http://127.0.0.1:8000') || 'http://127.0.0.1:8000',
+      value:
+        explicitSetting(cfg, 'vaultBaseUrl') ||
+        context.globalState.get<string>(LAST_BASE_URL) ||
+        'http://127.0.0.1:8000',
       ignoreFocusOut: true,
     });
     if (!baseUrl) return;
 
     const org = await vscode.window.showInputBox({
       prompt: 'Vault Org header / tenant account id',
-      value: cfg.get<string>('vaultOrg', '') || '',
+      value: explicitSetting(cfg, 'vaultOrg') || context.globalState.get<string>(LAST_ORG) || '',
       placeHolder: 'ai-gov-3',
       ignoreFocusOut: true,
     });
@@ -119,16 +176,46 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!token) return;
     await context.secrets.store(VAULT_TOKEN_SECRET, token);
 
+    // Repo URL decides the Vault `external_id`, so a value the user has already
+    // published under wins over whatever git currently reports -- re-deriving it
+    // would silently re-key agents that were staged under the earlier value.
+    // Branch is metadata only, so there the live checkout is the better answer.
+    const [detectedUrl, detectedBranch] = await Promise.all([detectRepoUrl(root), detectBranch(root)]);
     const repoUrl = await vscode.window.showInputBox({
-      prompt: 'Optional Git repository URL to store as metadata',
-      value: cfg.get<string>('vaultRepoUrl', '') || '',
+      prompt: 'Git repository URL. Determines the Vault agent identity — keep it consistent across publishes.',
+      value:
+        explicitSetting(cfg, 'vaultRepoUrl') ||
+        context.workspaceState.get<string>(LAST_REPO_URL) ||
+        detectedUrl,
       ignoreFocusOut: true,
     });
+    if (repoUrl === undefined) return; // Escape cancels; "" is a deliberate choice
+
     const branch = await vscode.window.showInputBox({
       prompt: 'Optional Git branch to store as metadata',
-      value: cfg.get<string>('vaultBranch', '') || '',
+      value:
+        explicitSetting(cfg, 'vaultBranch') ||
+        detectedBranch ||
+        context.workspaceState.get<string>(LAST_BRANCH) ||
+        '',
       ignoreFocusOut: true,
     });
+    if (branch === undefined) return;
+
+    if (!repoUrl.trim()) {
+      vscode.window.showWarningMessage(
+        'AI Stack Mapper: publishing without a repository URL. Agent identity falls back to this machine’s local path, ' +
+          'so publishing the same repo from another checkout will stage duplicate agents in Vault.'
+      );
+    }
+
+    // Remembered now rather than after a successful POST: the common failure is
+    // "Vault is not up yet", and retyping every field to retry is the friction
+    // this exists to remove. Each value is pre-filled and editable next time.
+    await context.globalState.update(LAST_BASE_URL, baseUrl);
+    await context.globalState.update(LAST_ORG, org);
+    await context.workspaceState.update(LAST_REPO_URL, repoUrl);
+    await context.workspaceState.update(LAST_BRANCH, branch);
 
     statusBarItem.text = '$(sync~spin) AI Stack: scanning before Vault publish...';
     statusBarItem.show();

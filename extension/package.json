@@ -2,7 +2,7 @@
   "name": "ai-stack-mapper",
   "displayName": "AI Stack Mapper",
   "description": "Discover local AI agents in a codebase and publish them to Vault AI Governance Auto Discovery.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "local-dev",
   "license": "UNLICENSED",
   "repository": {
@@ -87,6 +87,16 @@
           "default": "python3",
           "description": "Path to the Python 3 interpreter used to run the scanner (must be 3.8+)."
         },
+        "aiStackMapper.agentDiscovery": {
+          "type": "string",
+          "default": "entry-points",
+          "enum": ["path", "entry-points"],
+          "enumDescriptions": [
+            "Name an agent whenever a file path looks AI-related. Broad, and prone to promoting prompt-only files to agents.",
+            "Find exposed routes, tasks and commands, and keep only those whose import closure reaches a real LLM client. Falls back to gated path inference for code no entry point covers."
+          ],
+          "markdownDescription": "How local agents are discovered. `entry-points` produces fewer, better-evidenced agents, but changes each agent's `external_id` — everything already staged in Vault will re-key on the next publish."
+        },
         "aiStackMapper.scanOnSave": {
           "type": "boolean",
           "default": false,
@@ -97,6 +107,11 @@
           "default": "high",
           "enum": ["info", "low", "medium", "high", "critical"],
           "description": "Severity threshold used in the generated local AI risk report status. Risk data is not published to Vault."
+        },
+        "aiStackMapper.riskUseLLM": {
+          "type": "boolean",
+          "default": false,
+          "description": "Not supported in this Vault local-agent package: the risk scan is static-only and enabling this makes 'AI Risk: Scan Workspace' fail with an explanatory error."
         },
         "aiStackMapper.vaultBaseUrl": {
           "type": "string",
@@ -111,12 +126,12 @@
         "aiStackMapper.vaultRepoUrl": {
           "type": "string",
           "default": "",
-          "description": "Optional repository URL metadata sent to Vault when publishing scanner results."
+          "description": "Pins the repository URL used to publish. This value determines each agent's Vault external_id, so setting it guarantees a stable identity across machines and checkouts. Leave empty to use the last published value, falling back to the repo's git origin remote."
         },
         "aiStackMapper.vaultBranch": {
           "type": "string",
           "default": "",
-          "description": "Optional repository branch metadata sent to Vault when publishing scanner results."
+          "description": "Pins the branch metadata sent to Vault. Leave empty to use the current git branch. Branch is metadata only and does not affect agent identity."
         }
       }
     }

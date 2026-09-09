@@ -102,11 +102,21 @@ IMPORT_ATTRIBUTION_BARRIER_PARTS = {
     "monitoring",
     "instrumentation",
 }
+# Observability modules import AI SDKs to instrument or silence them --
+# `config/logging.py` imports transformers to lower its log level, and
+# `config/telemetry.py` imports litellm to register callbacks. Neither is a
+# model call. The directory names above only fire when observability code sits
+# in its own package; these catch the far more common single-file form.
 IMPORT_ATTRIBUTION_BARRIER_FILES = {
     "logging.py",
     "logger.py",
     "tracing.py",
     "metrics.py",
+    "telemetry.py",
+    "observability.py",
+    "instrumentation.py",
+    "monitoring.py",
+    "profiling.py",
 }
 
 

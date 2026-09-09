@@ -1,8 +1,21 @@
 """Data models used throughout the scanner."""
 from __future__ import annotations
 
+import datetime
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Any, Optional
+
+
+def utc_timestamp() -> str:
+    """Current UTC time as `YYYY-MM-DDTHH:MM:SS.ffffffZ`.
+
+    `datetime.utcnow()` is deprecated from Python 3.12 and scheduled for
+    removal, so the timezone-aware call is used instead. The tzinfo is dropped
+    before formatting to keep the trailing `Z` form that Vault payloads and
+    existing reports already carry (an aware `isoformat()` would emit
+    `+00:00`, giving an invalid `+00:00Z` suffix).
+    """
+    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
 
 # Categories we bucket every detected component into.
@@ -82,9 +95,9 @@ class Component:
     name: str
     package: str = ""
     occurrences: List[Occurrence] = field(default_factory=list)
-    # Populated only when --enrich is used (optional, LLM-generated, off by
-    # default). Unlike everything else on this class, this is probabilistic
-    # and unverified -- treat it as a hint, not a fact.
+    # Populated only by the optional LLM enrichment layer, which is not wired
+    # into the CLI in this package (see enrich.py). Unlike everything else on
+    # this class it is probabilistic and unverified -- a hint, not a fact.
     ai_enrichment: Optional[Dict[str, str]] = None
 
     @property
@@ -127,7 +140,9 @@ class ScanResult:
     generated_at: str
     scanned_files: int
     scanner_mode: str = "static"
+    agent_discovery: str = "path"
     local_agents: List[Dict[str, Any]] = field(default_factory=list)
+    entry_points: List[Dict[str, Any]] = field(default_factory=list)
     skipped_files: List[str] = field(default_factory=list)
     components: Dict[str, Component] = field(default_factory=dict)  # key: category|name|package
 
@@ -147,9 +162,11 @@ class ScanResult:
             "root": self.root,
             "generated_at": self.generated_at,
             "scanner_mode": self.scanner_mode,
+            "agent_discovery": self.agent_discovery,
             "scanned_files": self.scanned_files,
             "skipped_files": self.skipped_files,
             "total_components": len(self.components),
             "local_agents": self.local_agents,
+            "entry_points": self.entry_points,
             "categories": by_category,
         }

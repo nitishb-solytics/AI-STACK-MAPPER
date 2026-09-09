@@ -8,7 +8,7 @@ import json
 import sys
 
 from .report import render_markdown
-from .scanner import scan_directory
+from .scanner import AGENT_DISCOVERY_MODES, DISCOVERY_ENTRY_POINTS, scan_directory
 
 
 def main(argv=None) -> int:
@@ -18,9 +18,22 @@ def main(argv=None) -> int:
     parser.add_argument("--path", default=".", help="Root directory to scan.")
     parser.add_argument("--markdown-output", default=None, help="Write Markdown report to this file.")
     parser.add_argument("--json-output", default=None, help="Write JSON report to this file.")
+    parser.add_argument(
+        "--agent-discovery",
+        choices=AGENT_DISCOVERY_MODES,
+        default=DISCOVERY_ENTRY_POINTS,
+        help=(
+            "How local agents are inferred. 'entry-points' (default) finds exposed "
+            "routes/tasks/commands and keeps only those whose import closure reaches a real "
+            "LLM client, falling back to gated path inference for code no entry point covers. "
+            "'path' is the older behaviour: name an agent whenever a file path looks AI-ish."
+        ),
+    )
     args = parser.parse_args(argv)
 
-    result = scan_directory(args.path, scanner_mode="static")
+    result = scan_directory(
+        args.path, scanner_mode="static", agent_discovery=args.agent_discovery
+    )
     data = result.to_dict()
 
     if args.markdown_output:

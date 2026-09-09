@@ -5,8 +5,10 @@ discovery inventory into MRM Vault AI Governance.
 
 ## Documentation
 
-- [Internal Local Agent-to-Vault Implementation and Setup Guide](docs/INTERNAL_LOCAL_AGENT_VAULT_IMPLEMENTATION.md) is for Vault engineering, DevOps, database, frontend, and QA teams.
-- [AI Stack Mapper Client Quick Start](docs/CLIENT_AI_STACK_MAPPER_QUICK_START.md) is the shorter guide to give an extension user or client.
+Two companion documents are maintained outside this repository and shared directly:
+
+- *Internal Local Agent-to-Vault Implementation and Setup Guide* for Vault engineering, DevOps, database, frontend, and QA teams.
+- *AI Stack Mapper Client Quick Start*, the shorter guide to give an extension user or client.
 
 This extension does not onboard agents directly. It stages discovered local agents in Vault.
 Vault users then open AIAgent → Auto Discovery → Agent Discovery in Local, review the agents,

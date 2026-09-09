@@ -53,6 +53,21 @@ def _absolute_from_module(current_file: str, module: str | None, level: int) -> 
     return ".".join(prefix)
 
 
+def build_module_index(sources: Mapping[str, str]) -> Dict[str, str]:
+    """Map importable module name -> repo-relative file, for unambiguous names.
+
+    Ambiguous names (two files claiming one module path) are dropped rather
+    than guessed, for the same reason ``build_python_import_graph`` refuses to
+    resolve them: a wrong edge is worse than a missing one.
+    """
+    module_paths: dict[str, set[str]] = {}
+    for path in sources:
+        normalised = _normalise(path)
+        for alias in _module_aliases(_module_name(normalised)):
+            module_paths.setdefault(alias, set()).add(normalised)
+    return {module: next(iter(paths)) for module, paths in module_paths.items() if len(paths) == 1}
+
+
 def build_python_import_graph(sources: Mapping[str, str]) -> Dict[str, Set[str]]:
     """Return ``source file -> directly imported local files``.
 
