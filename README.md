@@ -47,13 +47,15 @@ Steps:
 5. Run `AI Stack: Scan Workspace`.
 6. Run `AI Stack: Publish Local Agent Discovery to Vault`.
 
-The publish command opens a single form asking for:
+The publish command opens a form with the Vault backend base URL (default: the e2e dev backend, remembered
+after each publish) and the repository URL and branch read from the checkout's git metadata.
 
-- Vault backend base URL, for example `http://127.0.0.1:8000`
-- Vault org header, for example `ai-gov-3`
-- Vault access token (`Bearer <token>` or `JWT <token>`; a bare token is sent as Bearer; leave blank to reuse the saved one)
+**Sign in & publish** opens the Solytics login launcher (`aiStackMapper.vaultLoginUrl`) in the browser. After the
+user signs in and picks the tenant, the launcher redirects to a one-time listener on `127.0.0.1`, and the extension
+publishes with that login: the token becomes the `Authorization` header and the token's issuer becomes the `Org`
+header. No token or Org is typed, and the token is not stored.
 
-The form also shows the repository URL and branch, both read from the checkout's git metadata.
+`aiStackMapper.vaultBaseUrl` and `aiStackMapper.vaultLoginUrl` must point at the same environment.
 
 ## Vault backend requirement
 

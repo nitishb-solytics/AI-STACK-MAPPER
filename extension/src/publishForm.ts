@@ -5,24 +5,19 @@ import * as path from 'path';
 
 export interface VaultDetails {
   baseUrl: string;
-  org: string;
-  /** Empty when the user kept the saved token. */
-  token: string;
 }
 
 export interface PublishFormDefaults {
   baseUrl: string;
-  org: string;
-  hasSavedToken: boolean;
   repoUrl: string;
   branch: string;
   identityNote: string;
 }
 
 /**
- * One form for every publish input, instead of a chain of input boxes in the
+ * One form for the publish inputs, instead of a chain of input boxes in the
  * command palette. Resolves undefined when the user cancels or closes the tab.
- * The saved token is never sent into the webview; a blank field means "reuse it".
+ * Tenant and token are not asked for: they come from the browser sign-in.
  */
 export function askVaultDetails(extensionPath: string, defaults: PublishFormDefaults): Promise<VaultDetails | undefined> {
   const panel = vscode.window.createWebviewPanel(
@@ -79,6 +74,7 @@ function formHtml(nonce: string, logo: string, defaults: PublishFormDefaults): s
   dt { color: var(--vscode-descriptionForeground); }
   dd { margin: 0; word-break: break-all; }
   .warn { color: var(--vscode-editorWarning-foreground); }
+  .signin { margin: 20px 0 0; padding: 10px 12px; border-radius: 4px; background: rgba(31, 142, 159, 0.12); }
   .actions { margin-top: 20px; display: flex; gap: 10px; }
   button { padding: 8px 18px; border-radius: 4px; font: inherit; font-weight: 600; cursor: pointer;
            color: #ffffff; background: var(--navy); border: 1px solid var(--navy); }
@@ -98,18 +94,15 @@ function formHtml(nonce: string, logo: string, defaults: PublishFormDefaults): s
 <form id="form">
   <label for="baseUrl">Vault backend base URL</label>
   <input id="baseUrl" name="baseUrl" type="url" required placeholder="https://your-vault-backend.example.com">
-  <label for="org">Org (tenant slug)</label>
-  <input id="org" name="org" required placeholder="vault_agent365">
-  <label for="token">Access token</label>
-  <input id="token" name="token" type="password" autocomplete="off">
-  <p class="hint">Paste the full Authorization header value: <code>Bearer &lt;token&gt;</code> or <code>JWT &lt;token&gt;</code>. A bare token is sent as Bearer.</p>
+  <p class="hint">The Vault API host for the environment you sign in to. Remembered for next time.</p>
   <dl>
     <dt>Repository</dt><dd id="repo"></dd>
     <dt>Branch</dt><dd id="branch"></dd>
   </dl>
   <p id="note" class="hint"></p>
+  <p class="signin">Your browser opens the Solytics login. Sign in and pick the tenant; the scan is published to that tenant with your login, so no token or Org is typed here.</p>
   <div class="actions">
-    <button type="submit">Publish</button>
+    <button type="submit">Sign in &amp; publish</button>
     <button type="button" id="cancel" class="secondary">Cancel</button>
   </div>
 </form>
@@ -119,18 +112,15 @@ function formHtml(nonce: string, logo: string, defaults: PublishFormDefaults): s
   const d = ${data};
   const form = document.getElementById('form');
   form.baseUrl.value = d.baseUrl;
-  form.org.value = d.org;
-  form.token.required = !d.hasSavedToken;
-  form.token.placeholder = d.hasSavedToken ? 'Leave blank to reuse the saved token' : 'Bearer <token>';
   document.getElementById('repo').textContent = d.repoUrl || '(none)';
   document.getElementById('branch').textContent = d.branch || '(none)';
   const note = document.getElementById('note');
   note.textContent = d.identityNote;
   if (!d.repoUrl) note.className = 'warn';
-  (d.baseUrl && d.org ? form.token : form.baseUrl).focus();
+  (d.baseUrl ? form.querySelector('button[type=submit]') : form.baseUrl).focus();
   form.addEventListener('submit', (e) => {
     e.preventDefault();
-    vscode.postMessage({ baseUrl: form.baseUrl.value.trim(), org: form.org.value.trim(), token: form.token.value.trim() });
+    vscode.postMessage({ baseUrl: form.baseUrl.value.trim() });
   });
   document.getElementById('cancel').addEventListener('click', () => vscode.postMessage(null));
 </script>

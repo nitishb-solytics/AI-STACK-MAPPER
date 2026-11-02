@@ -115,13 +115,13 @@
         },
         "aiStackMapper.vaultBaseUrl": {
           "type": "string",
-          "default": "http://127.0.0.1:8000",
-          "description": "Vault backend base URL used by 'AI Stack: Publish Discovery to Vault'."
+          "default": "https://e2e-django-revamp-dev.mrm-vault.solyticspartners.com",
+          "description": "Vault backend base URL used by 'AI Stack: Publish Discovery to Vault'. Must be the backend of the environment that aiStackMapper.vaultLoginUrl signs in to."
         },
-        "aiStackMapper.vaultOrg": {
+        "aiStackMapper.vaultLoginUrl": {
           "type": "string",
-          "default": "",
-          "description": "Vault Org header / tenant account id used by 'AI Stack: Publish Discovery to Vault'."
+          "default": "https://dev-auth.e2e.solyticspartners.com/launcher",
+          "description": "Solytics login launcher opened in the browser when publishing. The tenant and token for the publish come from this login."
         },
         "aiStackMapper.vaultRepoUrl": {
           "type": "string",

@@ -6,18 +6,19 @@ import { ScannerBridge, Occurrence, RiskFinding } from './scannerBridge';
 import { AiStackTreeProvider } from './treeViewProvider';
 import { RiskTreeProvider } from './riskTreeViewProvider';
 import { askVaultDetails } from './publishForm';
+import { signInWithBrowser, VaultSession } from './vaultSignIn';
 
 const execFile = promisify(cp.execFile);
 
 let statusBarItem: vscode.StatusBarItem;
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
-const VAULT_TOKEN_SECRET = 'aiStackMapper.vaultToken';
-// Last values actually used for a publish. The Vault instance (base URL, org)
+// Pasted tokens were stored here before browser sign-in replaced them.
+const LEGACY_VAULT_TOKEN_SECRET = 'aiStackMapper.vaultToken';
+// Last values actually used for a publish. The Vault instance (base URL)
 // is usually the same across repos so it lives in globalState; the repo URL and
 // branch are per-repo and live in workspaceState.
 const LAST_BASE_URL = 'aiStackMapper.lastBaseUrl';
-const LAST_ORG = 'aiStackMapper.lastOrg';
 const LAST_REPO_URL = 'aiStackMapper.lastRepoUrl';
 const LAST_BRANCH = 'aiStackMapper.lastBranch';
 
@@ -68,13 +69,6 @@ async function detectBranch(root: string): Promise<string> {
   return branch === 'HEAD' ? '' : branch; // detached HEAD has no branch name
 }
 
-function normalizeAuthorizationHeader(token: string): string {
-  const trimmed = token.trim();
-  if (/^(JWT|Bearer)\s+/i.test(trimmed)) {
-    return trimmed;
-  }
-  return `Bearer ${trimmed}`;
-}
 
 async function postJson(url: string, headers: Record<string, string>, body: unknown): Promise<any> {
   const response = await fetch(url, {
@@ -105,6 +99,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const treeProvider = new AiStackTreeProvider();
   const riskTreeProvider = new RiskTreeProvider();
   const bridge = new ScannerBridge(context.extensionPath);
+  void context.secrets.delete(LEGACY_VAULT_TOKEN_SECRET);
 
   context.subscriptions.push(vscode.window.registerTreeDataProvider('aiStackMapperView', treeProvider));
   context.subscriptions.push(vscode.window.registerTreeDataProvider('aiStackMapperRiskView', riskTreeProvider));
@@ -176,31 +171,40 @@ export function activate(context: vscode.ExtensionContext): void {
         'stage a duplicate set of agents in Vault. Set aiStackMapper.vaultRepoUrl, or add a git ' +
         'remote, to give this repository a stable identity.';
 
-    const storedToken = await context.secrets.get(VAULT_TOKEN_SECRET);
     const details = await askVaultDetails(context.extensionPath, {
       baseUrl:
         explicitSetting(cfg, 'vaultBaseUrl') ||
         context.globalState.get<string>(LAST_BASE_URL) ||
-        'http://127.0.0.1:8000',
-      org: explicitSetting(cfg, 'vaultOrg') || context.globalState.get<string>(LAST_ORG) || '',
-      hasSavedToken: !!storedToken,
+        cfg.get<string>('vaultBaseUrl', ''),
       repoUrl,
       branch,
       identityNote,
     });
     if (!details) return;
-    const { baseUrl, org } = details;
-    const token = details.token || storedToken || '';
-    if (!token) return;
-    if (details.token) await context.secrets.store(VAULT_TOKEN_SECRET, details.token);
+    const { baseUrl } = details;
 
     // Remembered now rather than after a successful POST: the common failure is
     // "Vault is not up yet", and re-entering every field to retry is the
     // friction this exists to remove.
     await context.globalState.update(LAST_BASE_URL, baseUrl);
-    await context.globalState.update(LAST_ORG, org);
     await context.workspaceState.update(LAST_REPO_URL, repoUrl);
     await context.workspaceState.update(LAST_BRANCH, branch);
+
+    // Tenant and token come from the user's own login, never typed or stored.
+    let session: VaultSession;
+    try {
+      session = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: 'AI Stack Mapper: sign in to Vault in your browser…',
+          cancellable: true,
+        },
+        (_progress, cancel) => signInWithBrowser(cfg.get<string>('vaultLoginUrl', ''), cancel)
+      );
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`AI Stack Mapper: Vault ${err.message}`);
+      return;
+    }
 
     statusBarItem.text = '$(sync~spin) AI Stack: scanning before Vault publish...';
     statusBarItem.show();
@@ -221,8 +225,8 @@ export function activate(context: vscode.ExtensionContext): void {
       const result = await postJson(
         endpoint,
         {
-          Authorization: normalizeAuthorizationHeader(token),
-          Org: org,
+          Authorization: session.authorization,
+          Org: session.org,
         },
         payload
       );
@@ -232,7 +236,7 @@ export function activate(context: vscode.ExtensionContext): void {
       statusBarItem.text = '$(check) AI Stack: discovery published';
       statusBarItem.tooltip = `Published ${total} local agent(s) to Vault Auto Discovery staging.`;
       vscode.window.showInformationMessage(
-        `AI Stack Mapper: published ${total} local agent(s) to Vault Auto Discovery. Open Vault → AIAgent → Auto Discovery → Agent Discovery in Local to import.`
+        `AI Stack Mapper: published ${total} local agent(s) to Vault Auto Discovery on tenant ${session.org}. Open Vault → AIAgent → Auto Discovery → Agent Discovery in Local to import.`
       );
     } catch (err: any) {
       statusBarItem.text = '$(error) AI Stack: Vault publish failed';
