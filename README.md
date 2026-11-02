@@ -50,10 +50,14 @@ Steps:
 The publish command opens a form with the Vault backend base URL (default: the e2e dev backend, remembered
 after each publish) and the repository URL and branch read from the checkout's git metadata.
 
+![Publish to Vault form in VS Code](docs/images/publish-form.png)
+
 **Sign in & publish** opens the Solytics login launcher (`aiStackMapper.vaultLoginUrl`) in the browser. After the
 user signs in and picks the tenant, the launcher redirects to a one-time listener on `127.0.0.1`, and the extension
 publishes with that login: the token becomes the `Authorization` header and the token's issuer becomes the `Org`
 header. No token or Org is typed, and the token is not stored.
+
+![Browser tab after signing in](docs/images/signed-in-browser.png)
 
 `aiStackMapper.vaultBaseUrl` and `aiStackMapper.vaultLoginUrl` must point at the same environment.
 
