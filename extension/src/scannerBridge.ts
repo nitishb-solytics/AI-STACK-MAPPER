@@ -38,13 +38,79 @@ export interface ScanData {
   scanned_files: number;
   skipped_files: string[];
   total_components: number;
+  local_agents?: LocalAgentData[];
+  agent_discovery?: string;
+  entry_points?: EntryPointData[];
   categories: { [category: string]: ComponentData[] };
 }
 
-export interface RiskScanResult {
+export interface EntryPointData {
+  kind: string;
+  label: string;
+  file: string;
+  line: number;
+  symbol?: string;
+  framework?: string;
+}
+
+export interface LocalAgentData {
+  key: string;
+  name: string;
+  score: number;
+  files: string[];
+  dependency_files?: string[];
+  components: { [bucket: string]: string[] };
+  evidence: Array<{
+    category: string;
+    component: string;
+    file: string;
+    line: number;
+    match_type: string;
+    detail: string;
+    package?: string;
+    attribution?: 'direct_path' | 'local_import' | 'entry_point' | 'entry_point_import' | 'runtime_container';
+    import_depth?: number;
+    ownership_confidence?: 'high' | 'medium' | 'low';
+  }>;
+  // Present only in entry-points discovery mode.
+  discovery?: 'entry_point' | 'path_fallback';
+  confidence?: 'high' | 'medium' | 'low';
+  entry_points?: EntryPointData[];
+  reachable_modules?: number;
+  llm_evidence_files?: string[];
+  llm_via_runtime_container?: string[];
+}
+
+export interface VaultLocalAgentPayload {
+  external_id: string;
+  content_hash: string;
+  key: string;
+  name: string;
+  score: number;
+  files: string[];
+  dependency_files?: string[];
+  components: { [bucket: string]: string[] };
+  evidence: LocalAgentData['evidence'];
+}
+
+export interface VaultPublishPayload {
+  source_type: string;
+  provider_key: string;
+  repo_name: string;
+  repo_path: string;
+  repo_url: string;
+  branch: string;
+  stack: ScanData;
+  risk: Record<string, never>;
+  local_agents: VaultLocalAgentPayload[];
+  discover: false;
+  include_risks: boolean;
+}
+
+export interface StackScanResult {
   markdownPath: string;
   jsonPath: string;
-  data: RiskReportData;
+  data: ScanData;
 }
 
 export interface RiskFinding {
@@ -82,7 +148,11 @@ export interface RiskReportData {
   llm_warnings: string[];
 }
 
-export const LLM_API_KEY_SECRET = "aiStackMapper.llmApiKey";
+export interface RiskScanResult {
+  markdownPath: string;
+  jsonPath: string;
+  data: RiskReportData;
+}
 
 /**
  * Spawns the bundled `ai_stack_scanner` Python package as a subprocess.
@@ -90,10 +160,10 @@ export const LLM_API_KEY_SECRET = "aiStackMapper.llmApiKey";
  * package shipped inside the extension (see extension/python/).
  */
 export class ScannerBridge {
-  constructor(
-    private readonly extensionPath: string,
-    private readonly secrets: vscode.SecretStorage
-  ) {}
+  // Deliberately holds no SecretStorage: this class only spawns the scanner
+  // subprocess. The Vault token is read and stored in extension.ts and never
+  // reaches a child process.
+  constructor(private readonly extensionPath: string) {}
 
   private get pythonPath(): string {
     return vscode.workspace.getConfiguration('aiStackMapper').get<string>('pythonPath') || 'python3';
@@ -103,47 +173,106 @@ export class ScannerBridge {
     return path.join(this.extensionPath, 'python');
   }
 
-  async scan(workspaceRoot: string): Promise<ScanData> {
-    const cfg = vscode.workspace.getConfiguration('aiStackMapper');
-    const enrich = cfg.get<boolean>('enrichWithLLM', false);
-
+  async scan(workspaceRoot: string): Promise<StackScanResult> {
     const env: NodeJS.ProcessEnv = { ...process.env };
     const existing = env.PYTHONPATH ? `${env.PYTHONPATH}${path.delimiter}` : '';
     env.PYTHONPATH = `${existing}${this.bundledEnginePath}`;
 
-    // The extension controls enrichment entirely via its own settings +
-    // Secret Storage (below) -- never via a `.env` file. Explicitly point
-    // the scanner at a nonexistent env-file path so it can't accidentally
-    // pick up an `AI_STACK_*` variable from a `.env` in the *scanned*
-    // workspace root (cli.py's default `.env` lookup is relative to its
-    // process cwd, which here is the target repo being scanned, not this
-    // extension). Without this, a scanned repo could otherwise plant its
-    // own `.env` to silently influence enrichment settings.
+    // Scanner behaviour is controlled entirely by this extension's own
+    // settings -- never by a `.env` file. The subprocess cwd is the repo being
+    // scanned, so any `AI_STACK_*` env-file lookup would resolve inside
+    // untrusted territory: a scanned repo could plant a `.env` to influence
+    // the scan. Pointing at an empty path disables that lookup for every
+    // scanner entry point, including ones that read it (see risk_cli.py).
     env.AI_STACK_ENV_FILE = '';
 
-    const args = ['-m', 'ai_stack_scanner.cli', '--path', workspaceRoot, '--format', 'json'];
+    const markdownPath = path.join(workspaceRoot, 'AI_STACK.md');
+    const jsonPath = path.join(workspaceRoot, 'ai-stack-report.json');
 
-    if (enrich) {
-      const apiKey = await this.secrets.get(LLM_API_KEY_SECRET);
-      if (!apiKey) {
-        throw new Error(
-          'AI enrichment is enabled ("aiStackMapper.enrichWithLLM") but no API key is set. ' +
-            'Run "AI Stack: Set LLM API Key" first, or disable enrichment in Settings.'
+    const agentDiscovery =
+      vscode.workspace.getConfiguration('aiStackMapper').get<string>('agentDiscovery') || 'entry-points';
+
+    const args = [
+      '-m',
+      'ai_stack_scanner.cli',
+      '--path',
+      workspaceRoot,
+      '--markdown-output',
+      markdownPath,
+      '--json-output',
+      jsonPath,
+      '--agent-discovery',
+      agentDiscovery,
+    ];
+
+    return new Promise((resolve, reject) => {
+      let proc: cp.ChildProcessWithoutNullStreams;
+      try {
+        proc = cp.spawn(this.pythonPath, args, { env, cwd: workspaceRoot });
+      } catch (err: any) {
+        reject(new Error(`Failed to launch "${this.pythonPath}": ${err.message}`));
+        return;
+      }
+
+      let stderr = '';
+      proc.stderr.on('data', (d) => (stderr += d.toString()));
+
+      proc.on('error', (err) => {
+        reject(
+          new Error(
+            `Could not run Python ("${this.pythonPath}"): ${err.message}. ` +
+              `If Python isn't on your PATH, set "aiStackMapper.pythonPath" in Settings.`
+          )
         );
-      }
-      // Passed via env, never as a CLI arg, so the key never shows up in a
-      // process listing (e.g. `ps`/Task Manager).
-      env.AI_STACK_LLM_API_KEY = apiKey;
-      const baseUrl = cfg.get<string>('llmBaseUrl', '');
-      if (baseUrl) {
-        env.AI_STACK_LLM_BASE_URL = baseUrl;
-      }
-      const model = cfg.get<string>('llmModel', '');
-      if (model) {
-        env.AI_STACK_LLM_MODEL = model;
-      }
-      args.push('--enrich');
-    }
+      });
+
+      proc.on('close', (code) => {
+        void (async () => {
+          if (code !== 0) {
+            reject(new Error(`Scanner exited with code ${code}.\n${stderr}`));
+            return;
+          }
+          try {
+            const raw = await fs.readFile(jsonPath, 'utf8');
+            const data = JSON.parse(raw) as ScanData;
+            resolve({ markdownPath, jsonPath, data });
+          } catch (err: any) {
+            reject(new Error(`Scanner completed but could not read ${path.basename(jsonPath)}: ${err.message}`));
+          }
+        })();
+      });
+    });
+  }
+
+  /**
+   * Builds the Vault codebase-discovery payload (including per-agent
+   * `external_id`/`content_hash`) via the shared `ai_stack_scanner.vault_publish`
+   * Python module, so every discovery entry point (extension, local-path CLI,
+   * future GitHub-fetch job) derives agent identity identically.
+   */
+  async buildVaultPayload(
+    workspaceRoot: string,
+    stackJsonPath: string,
+    options: { repoUrl?: string; branch?: string; selectedKeys?: string[] }
+  ): Promise<VaultPublishPayload> {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    const existing = env.PYTHONPATH ? `${env.PYTHONPATH}${path.delimiter}` : '';
+    env.PYTHONPATH = `${existing}${this.bundledEnginePath}`;
+
+    const args = [
+      '-m',
+      'ai_stack_scanner.vault_publish',
+      '--repo-root',
+      workspaceRoot,
+      '--stack-json',
+      stackJsonPath,
+      '--repo-url',
+      options.repoUrl || '',
+      '--branch',
+      options.branch || '',
+      '--selected-keys',
+      (options.selectedKeys || []).join(','),
+    ];
 
     return new Promise((resolve, reject) => {
       let proc: cp.ChildProcessWithoutNullStreams;
@@ -170,13 +299,13 @@ export class ScannerBridge {
 
       proc.on('close', (code) => {
         if (code !== 0) {
-          reject(new Error(`Scanner exited with code ${code}.\n${stderr}`));
+          reject(new Error(`Vault payload build exited with code ${code}.\n${stderr}`));
           return;
         }
         try {
-          resolve(JSON.parse(stdout) as ScanData);
-        } catch (err) {
-          reject(new Error(`Could not parse scanner output as JSON: ${err}\n${stdout.slice(0, 500)}`));
+          resolve(JSON.parse(stdout) as VaultPublishPayload);
+        } catch (err: any) {
+          reject(new Error(`Could not parse Vault payload output: ${err.message}`));
         }
       });
     });
@@ -186,9 +315,6 @@ export class ScannerBridge {
     const cfg = vscode.workspace.getConfiguration('aiStackMapper');
     const useLlm = cfg.get<boolean>('riskUseLLM', false);
     const failOn = cfg.get<string>('riskFailOn', 'high') || 'high';
-    const riskLlmMaxFindings = Math.max(1, cfg.get<number>('riskLlmMaxFindings', 25) || 25);
-    const riskLlmMinSeverity = cfg.get<string>('riskLlmMinSeverity', 'high') || 'high';
-
     const env: NodeJS.ProcessEnv = { ...process.env };
     const existing = env.PYTHONPATH ? `${env.PYTHONPATH}${path.delimiter}` : '';
     env.PYTHONPATH = `${existing}${this.bundledEnginePath}`;
@@ -196,14 +322,11 @@ export class ScannerBridge {
 
     const markdownPath = path.join(workspaceRoot, 'AI_RISK_REPORT.md');
     const jsonPath = path.join(workspaceRoot, 'ai-risk-report.json');
-
     const args = [
       '-m',
       'ai_stack_scanner.risk_cli',
       '--path',
       workspaceRoot,
-      '--report-title',
-      'AI Risk Report',
       '--markdown-output',
       markdownPath,
       '--json-output',
@@ -214,25 +337,9 @@ export class ScannerBridge {
     ];
 
     if (useLlm) {
-      const apiKey = await this.secrets.get(LLM_API_KEY_SECRET);
-      if (!apiKey) {
-        throw new Error(
-          'Risk LLM controls are enabled ("aiStackMapper.riskUseLLM") but no API key is set. ' +
-            'Run "AI Stack: Set LLM API Key" first, or disable risk LLM controls in Settings.'
-        );
-      }
-      env.AI_STACK_LLM_API_KEY = apiKey;
-      const baseUrl = cfg.get<string>('llmBaseUrl', '');
-      if (baseUrl) {
-        env.AI_STACK_LLM_BASE_URL = baseUrl;
-      }
-      const model = cfg.get<string>('llmModel', '');
-      if (model) {
-        env.AI_STACK_LLM_MODEL = model;
-      }
-      args.push('--llm-risk-control');
-      args.push('--risk-llm-max-findings', String(riskLlmMaxFindings));
-      args.push('--risk-llm-min-severity', riskLlmMinSeverity);
+      throw new Error(
+        'Risk LLM controls are not enabled in this Vault-local-agent package. Disable "aiStackMapper.riskUseLLM".'
+      );
     }
 
     return new Promise((resolve, reject) => {
@@ -246,7 +353,6 @@ export class ScannerBridge {
 
       let stderr = '';
       proc.stderr.on('data', (d) => (stderr += d.toString()));
-
       proc.on('error', (err) => {
         reject(
           new Error(
@@ -255,17 +361,15 @@ export class ScannerBridge {
           )
         );
       });
-
       proc.on('close', (code) => {
         void (async () => {
           if (code !== 0) {
-          reject(new Error(`Risk scanner exited with code ${code}.\n${stderr}`));
-          return;
+            reject(new Error(`Risk scanner exited with code ${code}.\n${stderr}`));
+            return;
           }
           try {
             const raw = await fs.readFile(jsonPath, 'utf8');
-            const data = JSON.parse(raw) as RiskReportData;
-            resolve({ markdownPath, jsonPath, data });
+            resolve({ markdownPath, jsonPath, data: JSON.parse(raw) as RiskReportData });
           } catch (err: any) {
             reject(new Error(`Risk scanner completed but could not read ${path.basename(jsonPath)}: ${err.message}`));
           }

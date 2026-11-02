@@ -18,6 +18,26 @@ def render_markdown(data: dict) -> str:
     lines.append("")
 
     any_content = False
+    local_agents = data.get("local_agents") or []
+    if local_agents:
+        any_content = True
+        lines.append("## Local AI Agents")
+        lines.append("")
+        lines.append("| Agent | Direct Files | Imported AI Files | Frameworks | LLM Providers | Knowledge | Tools | Prompts |")
+        lines.append("|---|---:|---:|---|---|---|---|---|")
+        for agent in local_agents:
+            components = agent.get("components") or {}
+            lines.append(
+                f"| {agent.get('name', '-')} | {len(agent.get('files') or [])} | "
+                f"{len(agent.get('dependency_files') or [])} | "
+                f"{', '.join(components.get('frameworks') or []) or '-'} | "
+                f"{', '.join(components.get('llm_providers') or []) or '-'} | "
+                f"{', '.join(components.get('knowledge') or []) or '-'} | "
+                f"{', '.join(components.get('tools') or []) or '-'} | "
+                f"{', '.join(components.get('prompts') or []) or '-'} |"
+            )
+        lines.append("")
+
     for category in ALL_CATEGORIES:
         components = data["categories"].get(category, [])
         if not components:

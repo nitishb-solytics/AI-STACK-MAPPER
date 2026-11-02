@@ -74,8 +74,12 @@ class FileVisitor(ast.NodeVisitor):
         self.findings: List[Finding] = []
         # local_name -> (top_level_package, full_dotted_path)
         self.import_map: Dict[str, Tuple[str, str]] = {}
-        # local_name -> (category, display_name, package)  (tracks e.g. `mcp = FastMCP(...)`)
-        self.symbol_table: Dict[str, Tuple[str, str, str]] = {}
+        # local_name -> (category, display_name, package, deployment_target)
+        # (tracks e.g. `mcp = FastMCP(...)`). The deployment target is resolved
+        # at assignment time -- including any endpoint override on the
+        # constructor -- so later usage occurrences on this symbol inherit
+        # where the client actually points instead of defaulting to cloud.
+        self.symbol_table: Dict[str, Tuple[str, str, str, str]] = {}
         # Stack of human-readable "function `foo` -- \"docstring\"" / "class `Bar`"
         # labels for whatever function/class body we're currently inside.
         # Purely free/static context -- feeds Occurrence.context_hint.
@@ -139,7 +143,11 @@ class FileVisitor(ast.NodeVisitor):
         if isinstance(node.value, ast.Call):
             info = self._classify_call(node.value)
             if info and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-                self.symbol_table[node.targets[0].id] = (info[0], info[1], info[2])
+                deployment_target = info[4]
+                override = self._detect_endpoint_override(node.value)
+                if override:
+                    deployment_target = override[0]
+                self.symbol_table[node.targets[0].id] = (info[0], info[1], info[2], deployment_target)
         elif isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
             self._check_model_literal(node.value.value, node.lineno)
         self.generic_visit(node)
@@ -168,17 +176,18 @@ class FileVisitor(ast.NodeVisitor):
             # variable we already know is an LLM/MCP client/agent (e.g.
             # `client.chat.completions.create(messages=[...])`), capture any
             # prompt/message text as a low-confidence "usage" occurrence on
-            # that same component -- free static context for --enrich.
+            # that same component -- free static context.
             dotted = _dotted_name(node.func) if isinstance(node.func, ast.Attribute) else None
             root = dotted.split(".")[0] if dotted else None
             if root and root in self.symbol_table:
                 prompt_hint = self._extract_prompt_hint(node)
                 if prompt_hint:
-                    category, display, package = self.symbol_table[root]
+                    category, display, package, deployment_target = self.symbol_table[root]
                     self.findings.append((
                         category, display, package,
                         Occurrence(
                             self.filename, node.lineno, "usage", CONFIDENCE_LOW,
+                            deployment_target=deployment_target,
                             context_hint=self._current_context_hint(), prompt_hint=prompt_hint,
                         ),
                     ))
@@ -258,8 +267,8 @@ class FileVisitor(ast.NodeVisitor):
     def _extract_prompt_hint(self, node: ast.Call) -> str:
         """Best-effort extraction of prompt/message text from call keyword
         arguments (e.g. `messages=[{"role": "user", "content": "..."}]`,
-        `prompt="..."`, `system="..."`). Static only -- never executed,
-        never sent anywhere unless --enrich is explicitly enabled.
+        `prompt="..."`, `system="..."`). Static only -- never executed, and
+        never sent anywhere by this package (see enrich.py).
         """
         for kw in node.keywords:
             if kw.arg not in PROMPT_BEARING_KWARGS:
@@ -321,7 +330,7 @@ class FileVisitor(ast.NodeVisitor):
             base_name = _dotted_name(call_target.value)
             attr = call_target.attr
             if base_name in self.symbol_table:
-                cat, display, _package = self.symbol_table[base_name]
+                cat, display, _package, _deployment_target = self.symbol_table[base_name]
                 if cat == CATEGORY_MCP and attr in MCP_METHOD_DECORATORS:
                     self.findings.append((
                         CATEGORY_MCP, f"MCP {attr} registration (@{base_name}.{attr})", "mcp",

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import ast
 from dataclasses import asdict, dataclass
-import datetime
 import json
 import os
 import re
@@ -12,6 +11,9 @@ import time
 import urllib.error
 import urllib.request
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+
+from .fsutil import prune_dirs
+from .models import utc_timestamp
 
 
 IGNORE_DIRS = {
@@ -174,6 +176,16 @@ def scan_risks(
             skipped_files.append(rel)
             continue
 
+        # A file we cannot parse is never seen by the AST rules, so counting it
+        # as "scanned" would let the report claim a clean pass over code that
+        # was never actually analysed. Record it as skipped instead, matching
+        # how the stack scanner treats parse errors.
+        try:
+            ast.parse(source, filename=rel)
+        except (SyntaxError, ValueError):
+            skipped_files.append(rel)
+            continue
+
         scanned_files += 1
         source_by_rel[rel] = source
         findings.extend(_review_file(rel, source))
@@ -193,7 +205,7 @@ def scan_risks(
 
     return RiskScanResult(
         root=root,
-        generated_at=datetime.datetime.utcnow().isoformat() + "Z",
+        generated_at=utc_timestamp(),
         scanned_files=scanned_files,
         changed_only=changed_only,
         fail_on=fail_on,
@@ -291,8 +303,8 @@ def render_risk_markdown(data: Dict[str, object]) -> str:
 def _iter_python_files(root: str, selected_files: Optional[Sequence[str]]) -> Iterable[str]:
     selected = None if selected_files is None else {p.replace("/", os.sep) for p in selected_files}
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in IGNORE_DIRS and not d.endswith(".egg-info")]
-        for filename in filenames:
+        dirnames[:] = prune_dirs(dirpath, dirnames, IGNORE_DIRS)
+        for filename in sorted(filenames):
             if not filename.endswith(".py"):
                 continue
             path = os.path.join(dirpath, filename)
