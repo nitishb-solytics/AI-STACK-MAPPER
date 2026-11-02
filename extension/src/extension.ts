@@ -177,7 +177,7 @@ export function activate(context: vscode.ExtensionContext): void {
         'remote, to give this repository a stable identity.';
 
     const storedToken = await context.secrets.get(VAULT_TOKEN_SECRET);
-    const details = await askVaultDetails({
+    const details = await askVaultDetails(context.extensionPath, {
       baseUrl:
         explicitSetting(cfg, 'vaultBaseUrl') ||
         context.globalState.get<string>(LAST_BASE_URL) ||
