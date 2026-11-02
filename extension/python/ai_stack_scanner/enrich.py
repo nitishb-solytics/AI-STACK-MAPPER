@@ -1,6 +1,13 @@
 """
-Optional LLM-powered enrichment layer -- OFF by default, must be explicitly
-enabled via `--enrich`.
+Optional LLM-powered enrichment layer.
+
+NOT CURRENTLY REACHABLE. This Vault local-agent package deliberately ships a
+static-only scanner, so `cli.py` exposes no `--enrich` flag and nothing calls
+`enrich_components()`. The module is kept intact (along with
+`Component.ai_enrichment`, the Markdown rendering in `report.py` and the
+`AiEnrichment` type in `scannerBridge.ts`) so the feature can be re-enabled by
+wiring the flag back into `cli.py` -- but as shipped, this scanner makes no
+outbound network calls at all. Re-enable it only deliberately.
 
 Given the deterministic scan results, this asks an LLM (any OpenAI-compatible
 chat completions endpoint -- OpenAI, Azure OpenAI, or a self-hosted/on-prem

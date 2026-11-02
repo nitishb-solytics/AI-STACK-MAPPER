@@ -116,18 +116,43 @@ export class AiStackTreeProvider implements vscode.TreeDataProvider<AiStackTreeI
           agent
         );
         const dependencyCount = agent.dependency_files?.length || 0;
-        item.description = dependencyCount
+        const files = dependencyCount
           ? `${agent.files.length} direct + ${dependencyCount} imported file(s)`
           : `${agent.files.length} file(s)`;
-        item.iconPath = new vscode.ThemeIcon('robot');
+        const routes = agent.entry_points?.length;
+        item.description = routes
+          ? `${routes} entry point(s) · ${agent.confidence} · ${files}`
+          : agent.confidence
+            ? `no entry point · ${agent.confidence} · ${files}`
+            : files;
+        item.iconPath = new vscode.ThemeIcon(
+          agent.discovery === 'path_fallback' ? 'question' : 'robot'
+        );
         const parts = Object.entries(agent.components || {})
           .filter(([, values]) => values.length > 0)
           .map(([bucket, values]) => `${bucket}: ${values.join(', ')}`);
-        item.tooltip = new vscode.MarkdownString(
+        let tooltipMd =
           `**${agent.name}**\n\nDirect files: ${agent.files.length}\n\n` +
-          `Imported dependency files with AI evidence: ${dependencyCount}\n\n` +
-          `${parts.join('\n\n') || 'No mapped components'}`
-        );
+          `Imported dependency files with AI evidence: ${dependencyCount}\n\n`;
+        if (agent.entry_points?.length) {
+          tooltipMd +=
+            `Exposed via:\n\n` +
+            agent.entry_points.map((e) => `- \`${e.kind}\` ${e.label}`).join('\n') +
+            '\n\n';
+        } else if (agent.discovery === 'path_fallback') {
+          tooltipMd +=
+            '_No entry point reaches this code — inferred from paths and kept at low confidence._\n\n';
+        }
+        if (agent.llm_evidence_files?.length) {
+          const viaRuntime = new Set(agent.llm_via_runtime_container || []);
+          tooltipMd +=
+            `LLM evidence:\n\n` +
+            agent.llm_evidence_files
+              .map((f) => `- \`${f}\`${viaRuntime.has(f) ? ' _(via runtime container — inferred)_' : ''}`)
+              .join('\n') +
+            '\n\n';
+        }
+        item.tooltip = new vscode.MarkdownString(tooltipMd + (parts.join('\n\n') || 'No mapped components'));
         return item;
       });
     }

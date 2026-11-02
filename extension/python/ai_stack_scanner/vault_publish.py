@@ -14,14 +14,42 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 from typing import Any, Dict, List, Optional
 
 
+def normalise_repo_url(repo_url: str) -> str:
+    """Reduce cosmetically different spellings of one repo URL to one key.
+
+    The extension asks the user to free-type this URL, so the same repository
+    reaches Vault as ``https://github.com/Org/Repo.git``, ``.../org/repo``, or
+    ``git@github.com:org/repo.git`` depending on who ran the scan. Feeding
+    those straight into ``agent_external_id`` would mint a different
+    ``external_id`` per spelling and leave Vault holding duplicate AIAgent
+    records for a single logical agent -- the exact failure this module exists
+    to prevent. Scheme, credentials, ``.git`` suffix, trailing slash and case
+    are all dropped, so every form above collapses to ``github.com/org/repo``.
+    """
+    url = (repo_url or "").strip()
+    if not url:
+        return ""
+    url = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://", "", url)  # scheme
+    url = re.sub(r"^[^/@]*@", "", url)                       # user[:password]@ / git@
+    url = re.sub(r"^([^/]+):(?=[^0-9])", r"\1/", url)        # scp-style host:path (not host:port)
+    url = url.rstrip("/")
+    if url.endswith(".git"):
+        url = url[: -len(".git")]
+    return url.rstrip("/").lower()
+
+
 def repo_identity(repo_root: str, repo_url: str = "") -> str:
-    repo_url = (repo_url or "").strip()
-    if repo_url:
-        return repo_url
+    normalised = normalise_repo_url(repo_url)
+    if normalised:
+        return normalised
+    # No URL given: fall back to the local path. This is machine-specific, so
+    # two people scanning the same checkout stage separate agents -- pass a
+    # repo URL whenever a stable cross-machine identity is wanted.
     return repo_root.replace("\\", "/").rstrip("/").lower()
 
 

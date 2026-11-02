@@ -39,7 +39,18 @@ export interface ScanData {
   skipped_files: string[];
   total_components: number;
   local_agents?: LocalAgentData[];
+  agent_discovery?: string;
+  entry_points?: EntryPointData[];
   categories: { [category: string]: ComponentData[] };
+}
+
+export interface EntryPointData {
+  kind: string;
+  label: string;
+  file: string;
+  line: number;
+  symbol?: string;
+  framework?: string;
 }
 
 export interface LocalAgentData {
@@ -57,10 +68,17 @@ export interface LocalAgentData {
     match_type: string;
     detail: string;
     package?: string;
-    attribution?: 'direct_path' | 'local_import';
+    attribution?: 'direct_path' | 'local_import' | 'entry_point' | 'entry_point_import' | 'runtime_container';
     import_depth?: number;
     ownership_confidence?: 'high' | 'medium' | 'low';
   }>;
+  // Present only in entry-points discovery mode.
+  discovery?: 'entry_point' | 'path_fallback';
+  confidence?: 'high' | 'medium' | 'low';
+  entry_points?: EntryPointData[];
+  reachable_modules?: number;
+  llm_evidence_files?: string[];
+  llm_via_runtime_container?: string[];
 }
 
 export interface VaultLocalAgentPayload {
@@ -142,10 +160,10 @@ export interface RiskScanResult {
  * package shipped inside the extension (see extension/python/).
  */
 export class ScannerBridge {
-  constructor(
-    private readonly extensionPath: string,
-    private readonly secrets: vscode.SecretStorage
-  ) {}
+  // Deliberately holds no SecretStorage: this class only spawns the scanner
+  // subprocess. The Vault token is read and stored in extension.ts and never
+  // reaches a child process.
+  constructor(private readonly extensionPath: string) {}
 
   private get pythonPath(): string {
     return vscode.workspace.getConfiguration('aiStackMapper').get<string>('pythonPath') || 'python3';
@@ -160,18 +178,19 @@ export class ScannerBridge {
     const existing = env.PYTHONPATH ? `${env.PYTHONPATH}${path.delimiter}` : '';
     env.PYTHONPATH = `${existing}${this.bundledEnginePath}`;
 
-    // The extension controls enrichment entirely via its own settings +
-    // Secret Storage (below) -- never via a `.env` file. Explicitly point
-    // the scanner at a nonexistent env-file path so it can't accidentally
-    // pick up an `AI_STACK_*` variable from a `.env` in the *scanned*
-    // workspace root (cli.py's default `.env` lookup is relative to its
-    // process cwd, which here is the target repo being scanned, not this
-    // extension). Without this, a scanned repo could otherwise plant its
-    // own `.env` to silently influence enrichment settings.
+    // Scanner behaviour is controlled entirely by this extension's own
+    // settings -- never by a `.env` file. The subprocess cwd is the repo being
+    // scanned, so any `AI_STACK_*` env-file lookup would resolve inside
+    // untrusted territory: a scanned repo could plant a `.env` to influence
+    // the scan. Pointing at an empty path disables that lookup for every
+    // scanner entry point, including ones that read it (see risk_cli.py).
     env.AI_STACK_ENV_FILE = '';
 
     const markdownPath = path.join(workspaceRoot, 'AI_STACK.md');
     const jsonPath = path.join(workspaceRoot, 'ai-stack-report.json');
+
+    const agentDiscovery =
+      vscode.workspace.getConfiguration('aiStackMapper').get<string>('agentDiscovery') || 'entry-points';
 
     const args = [
       '-m',
@@ -182,6 +201,8 @@ export class ScannerBridge {
       markdownPath,
       '--json-output',
       jsonPath,
+      '--agent-discovery',
+      agentDiscovery,
     ];
 
     return new Promise((resolve, reject) => {
@@ -294,8 +315,6 @@ export class ScannerBridge {
     const cfg = vscode.workspace.getConfiguration('aiStackMapper');
     const useLlm = cfg.get<boolean>('riskUseLLM', false);
     const failOn = cfg.get<string>('riskFailOn', 'high') || 'high';
-    const riskLlmMaxFindings = Math.max(1, cfg.get<number>('riskLlmMaxFindings', 25) || 25);
-    const riskLlmMinSeverity = cfg.get<string>('riskLlmMinSeverity', 'high') || 'high';
     const env: NodeJS.ProcessEnv = { ...process.env };
     const existing = env.PYTHONPATH ? `${env.PYTHONPATH}${path.delimiter}` : '';
     env.PYTHONPATH = `${existing}${this.bundledEnginePath}`;

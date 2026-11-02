@@ -5,8 +5,10 @@ discovery inventory into MRM Vault AI Governance.
 
 ## Documentation
 
-- [Internal Local Agent-to-Vault Implementation and Setup Guide](docs/INTERNAL_LOCAL_AGENT_VAULT_IMPLEMENTATION.md) is for Vault engineering, DevOps, database, frontend, and QA teams.
-- [AI Stack Mapper Client Quick Start](docs/CLIENT_AI_STACK_MAPPER_QUICK_START.md) is the shorter guide to give an extension user or client.
+Two companion documents are maintained outside this repository and shared directly:
+
+- *Internal Local Agent-to-Vault Implementation and Setup Guide* for Vault engineering, DevOps, database, frontend, and QA teams.
+- *AI Stack Mapper Client Quick Start*, the shorter guide to give an extension user or client.
 
 This extension does not onboard agents directly. It stages discovered local agents in Vault.
 Vault users then open AIAgent → Auto Discovery → Agent Discovery in Local, review the agents,
@@ -45,12 +47,15 @@ Steps:
 5. Run `AI Stack: Scan Workspace`.
 6. Run `AI Stack: Publish Local Agent Discovery to Vault`.
 
-The publish command asks for:
+The publish command opens a form with the Vault backend base URL (default: the e2e dev backend, remembered
+after each publish) and the repository URL and branch read from the checkout's git metadata.
 
-- Vault backend base URL, for example `http://127.0.0.1:8000`
-- Vault org header, for example `ai-gov-3`
-- Vault access token (`Bearer <token>`; entering only the token is also supported)
-- optional repo URL and branch metadata
+**Sign in & publish** opens the Solytics login launcher (`aiStackMapper.vaultLoginUrl`) in the browser. After the
+user signs in and picks the tenant, the launcher redirects to a one-time listener on `127.0.0.1`, and the extension
+publishes with that login: the token becomes the `Authorization` header and the token's issuer becomes the `Org`
+header. No token or Org is typed, and the token is not stored.
+
+`aiStackMapper.vaultBaseUrl` and `aiStackMapper.vaultLoginUrl` must point at the same environment.
 
 ## Vault backend requirement
 
