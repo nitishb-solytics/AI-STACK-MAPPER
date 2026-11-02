@@ -1,7 +1,7 @@
 {
   "name": "ai-stack-mapper",
   "displayName": "AI Stack Mapper",
-  "description": "Discover local AI agents in a codebase and publish them to Vault AI Governance Auto Discovery.",
+  "description": "Discover local AI agents in a codebase and publish them to Vault AI Governance.",
   "version": "0.3.0",
   "publisher": "local-dev",
   "license": "UNLICENSED",

@@ -11,7 +11,7 @@ Two companion documents are maintained outside this repository and shared direct
 - *AI Stack Mapper Client Quick Start*, the shorter guide to give an extension user or client.
 
 This extension does not onboard agents directly. It stages discovered local agents in Vault.
-Vault users then open AIAgent → Auto Discovery → Agent Discovery in Local, review the agents,
+Vault users then open AIAgent → Shadow AI → Agent Discovery in Local, review the agents,
 and import only the selected agent(s).
 
 ## Flow
@@ -21,7 +21,7 @@ VS Code target repo
   → AI Stack scan
   → Publish Local Agent Discovery to Vault
   → Vault stores staged inventory
-  → Vault Auto Discovery lists "Agent Discovery in Local"
+  → Vault Shadow AI lists "Agent Discovery in Local"
   → user selects agents in Vault
   → Vault creates AIAgent/components
 ```

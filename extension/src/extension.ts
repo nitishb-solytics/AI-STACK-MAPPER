@@ -234,9 +234,9 @@ export function activate(context: vscode.ExtensionContext): void {
       const counts = result?.agent_counts || {};
       const total = counts.total ?? payload.local_agents.length;
       statusBarItem.text = '$(check) AI Stack: discovery published';
-      statusBarItem.tooltip = `Published ${total} local agent(s) to Vault Auto Discovery staging.`;
+      statusBarItem.tooltip = `Published ${total} local agent(s) to Vault for import.`;
       vscode.window.showInformationMessage(
-        `AI Stack Mapper: published ${total} local agent(s) to Vault Auto Discovery on tenant ${session.org}. Open Vault → AIAgent → Auto Discovery → Agent Discovery in Local to import.`
+        `AI Stack Mapper: published ${total} local agent(s) to Vault on tenant ${session.org}. Open Vault → AIAgent → Shadow AI → Agent Discovery in Local to import.`
       );
     } catch (err: any) {
       statusBarItem.text = '$(error) AI Stack: Vault publish failed';
