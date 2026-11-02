@@ -47,12 +47,13 @@ Steps:
 5. Run `AI Stack: Scan Workspace`.
 6. Run `AI Stack: Publish Local Agent Discovery to Vault`.
 
-The publish command asks for:
+The publish command opens a single form asking for:
 
 - Vault backend base URL, for example `http://127.0.0.1:8000`
 - Vault org header, for example `ai-gov-3`
-- Vault access token (`Bearer <token>`; entering only the token is also supported)
-- optional repo URL and branch metadata
+- Vault access token (`Bearer <token>` or `JWT <token>`; a bare token is sent as Bearer; leave blank to reuse the saved one)
+
+The form also shows the repository URL and branch, both read from the checkout's git metadata.
 
 ## Vault backend requirement
 

@@ -5,6 +5,7 @@ import { promisify } from 'util';
 import { ScannerBridge, Occurrence, RiskFinding } from './scannerBridge';
 import { AiStackTreeProvider } from './treeViewProvider';
 import { RiskTreeProvider } from './riskTreeViewProvider';
+import { askVaultDetails } from './publishForm';
 
 const execFile = promisify(cp.execFile);
 
@@ -148,33 +149,6 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     const cfg = vscode.workspace.getConfiguration('aiStackMapper');
-    const baseUrl = await vscode.window.showInputBox({
-      prompt: 'Vault backend base URL',
-      value:
-        explicitSetting(cfg, 'vaultBaseUrl') ||
-        context.globalState.get<string>(LAST_BASE_URL) ||
-        'http://127.0.0.1:8000',
-      ignoreFocusOut: true,
-    });
-    if (!baseUrl) return;
-
-    const org = await vscode.window.showInputBox({
-      prompt: 'Vault Org header / tenant account id',
-      value: explicitSetting(cfg, 'vaultOrg') || context.globalState.get<string>(LAST_ORG) || '',
-      placeHolder: 'ai-gov-3',
-      ignoreFocusOut: true,
-    });
-    if (!org) return;
-
-    const storedToken = await context.secrets.get(VAULT_TOKEN_SECRET);
-    const token = await vscode.window.showInputBox({
-      prompt: 'Vault access token. Paste token only, or full "Bearer <token>" value.',
-      value: storedToken || '',
-      password: true,
-      ignoreFocusOut: true,
-    });
-    if (!token) return;
-    await context.secrets.store(VAULT_TOKEN_SECRET, token);
 
     // Repo URL and branch are resolved, never typed. The URL is the input to
     // every agent's Vault `external_id`, so a free-text box makes identity a
@@ -195,18 +169,30 @@ export function activate(context: vscode.ExtensionContext): void {
       : detectedUrl
         ? 'from this checkout’s git origin'
         : 'remembered from the last publish';
-    const confirmation = repoUrl
-      ? `Repository: ${repoUrl}\nBranch: ${branch || '(none)'}\n\nIdentity is ${originLabel}.`
-      : 'No git remote was found and no repository URL is pinned.\n\n' +
-        'Agent identity will fall back to this machine’s local path, so publishing the same ' +
-        'repository from another checkout will stage a duplicate set of agents in Vault.\n\n' +
-        'Set aiStackMapper.vaultRepoUrl, or add a git remote, to give this repository a stable identity.';
-    const proceed = await vscode.window.showInformationMessage(
-      repoUrl ? 'Publish local agent discovery to Vault?' : 'Publish without a stable repository identity?',
-      { modal: true, detail: confirmation },
-      repoUrl ? 'Publish' : 'Publish anyway'
-    );
-    if (!proceed) return;
+    const identityNote = repoUrl
+      ? `Identity is ${originLabel}.`
+      : 'No git remote was found and no repository URL is pinned. Agent identity will fall back to ' +
+        'this machine’s local path, so publishing the same repository from another checkout will ' +
+        'stage a duplicate set of agents in Vault. Set aiStackMapper.vaultRepoUrl, or add a git ' +
+        'remote, to give this repository a stable identity.';
+
+    const storedToken = await context.secrets.get(VAULT_TOKEN_SECRET);
+    const details = await askVaultDetails({
+      baseUrl:
+        explicitSetting(cfg, 'vaultBaseUrl') ||
+        context.globalState.get<string>(LAST_BASE_URL) ||
+        'http://127.0.0.1:8000',
+      org: explicitSetting(cfg, 'vaultOrg') || context.globalState.get<string>(LAST_ORG) || '',
+      hasSavedToken: !!storedToken,
+      repoUrl,
+      branch,
+      identityNote,
+    });
+    if (!details) return;
+    const { baseUrl, org } = details;
+    const token = details.token || storedToken || '';
+    if (!token) return;
+    if (details.token) await context.secrets.store(VAULT_TOKEN_SECRET, details.token);
 
     // Remembered now rather than after a successful POST: the common failure is
     // "Vault is not up yet", and re-entering every field to retry is the
