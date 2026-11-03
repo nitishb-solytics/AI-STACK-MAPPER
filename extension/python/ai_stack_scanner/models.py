@@ -145,6 +145,9 @@ class ScanResult:
     entry_points: List[Dict[str, Any]] = field(default_factory=list)
     skipped_files: List[str] = field(default_factory=list)
     components: Dict[str, Component] = field(default_factory=dict)  # key: category|name|package
+    # Full prompt text, keyed to its PROMPT component by name. Kept out of occurrences and
+    # evidence: Vault copies those into a size-capped `content` attribute.
+    prompts: List[Dict[str, Any]] = field(default_factory=list)
 
     def add(self, category: str, name: str, package: str, occurrence: Occurrence) -> None:
         key = f"{category}|{name}|{package}"
@@ -169,4 +172,5 @@ class ScanResult:
             "local_agents": self.local_agents,
             "entry_points": self.entry_points,
             "categories": by_category,
+            "prompts": self.prompts,
         }

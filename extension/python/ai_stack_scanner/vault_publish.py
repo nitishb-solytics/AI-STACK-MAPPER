@@ -69,13 +69,16 @@ def agent_external_id(identity: str, agent_key: str) -> str:
     return _sha1(f"{identity}:{agent_key}")
 
 
-def agent_content_hash(agent: Dict[str, Any]) -> str:
+def agent_content_hash(agent: Dict[str, Any], prompts: Optional[List[Dict[str, Any]]] = None) -> str:
     fingerprint = {
         "files": agent.get("files") or [],
         "dependency_files": agent.get("dependency_files") or [],
         "components": agent.get("components") or {},
         "evidence": agent.get("evidence") or [],
     }
+    # Only when present, so agents without prompts keep the hash they were staged under.
+    if prompts:
+        fingerprint["prompts"] = [p.get("text") for p in prompts]
     return _sha1(json.dumps(_stable(fingerprint), sort_keys=True))
 
 
@@ -83,14 +86,19 @@ def build_local_agents_payload(
     identity: str,
     agents: List[Dict[str, Any]],
     selected_keys: Optional[List[str]] = None,
+    prompts: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
+    prompts = prompts or []
     if selected_keys is not None:
         selected = set(selected_keys)
         agents = [a for a in agents if a.get("key") in selected]
     return [
         {
             "external_id": agent_external_id(identity, agent["key"]),
-            "content_hash": agent_content_hash(agent),
+            "content_hash": agent_content_hash(
+                agent,
+                [p for p in prompts if p.get("component") in ((agent.get("components") or {}).get("prompts") or [])],
+            ),
             "key": agent.get("key"),
             "name": agent.get("name"),
             "score": agent.get("score"),
@@ -121,7 +129,7 @@ def build_vault_payload(
         "branch": branch or "",
         "stack": stack,
         "risk": {},
-        "local_agents": build_local_agents_payload(identity, agents, selected_keys),
+        "local_agents": build_local_agents_payload(identity, agents, selected_keys, stack.get("prompts")),
         "discover": False,
         "include_risks": False,
     }

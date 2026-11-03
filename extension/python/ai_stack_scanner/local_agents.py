@@ -8,8 +8,10 @@ occurrences.
 """
 from __future__ import annotations
 
+import ast
 import os
 import re
+import textwrap
 from collections import defaultdict
 from typing import Any, Dict, Iterable, List
 
@@ -185,6 +187,111 @@ def infer_agent_from_file(rel_path: str) -> str | None:
             return stem
 
     return None
+
+
+PROMPT_NAME_RE = re.compile(r"prompt|template|instruction|guideline|system_message", re.IGNORECASE)
+PROMPT_TEXT_KWARGS = {"prompt", "system", "system_prompt", "instructions", "template", "system_message"}
+PROMPT_TEMPLATE_CALLS = {"PromptTemplate", "ChatPromptTemplate", "from_template", "from_messages", "SystemMessage", "HumanMessage"}
+MAX_PROMPT_CHARS = 20_000
+
+
+def _call_name(func: ast.AST) -> str:
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return ""
+
+
+def _literal_text(node: ast.AST) -> str | None:
+    """Text of a statically known string: literals, f-strings (placeholders kept as
+    written), `+` concatenation, and `dedent(...)` / `.strip()` / `.format(...)` around them."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        parts = []
+        for value in node.values:
+            if isinstance(value, ast.Constant):
+                parts.append(str(value.value))
+            else:
+                inner = getattr(value, "value", value)
+                parts.append("{" + (ast.unparse(inner) if hasattr(ast, "unparse") else "...") + "}")
+        return "".join(parts)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _literal_text(node.left), _literal_text(node.right)
+        return left + right if left is not None and right is not None else None
+    if isinstance(node, ast.Call):
+        name = _call_name(node.func)
+        if name == "dedent" and node.args:
+            text = _literal_text(node.args[0])
+            return textwrap.dedent(text) if text is not None else None
+        if name in {"strip", "lstrip", "rstrip", "format"} and isinstance(node.func, ast.Attribute):
+            return _literal_text(node.func.value)
+    return None
+
+
+def _looks_like_prompt(text: str) -> bool:
+    # Excludes names like TEMPLATE_DIR = "templates" that match by name only.
+    return len(text.strip()) >= 30 and " " in text.strip()
+
+
+def extract_prompt_texts(source: str) -> list[dict]:
+    """Full text of every statically written prompt in a Python file: string values
+    assigned to prompt-like names, prompt keyword arguments, message `content`, and
+    PromptTemplate / ChatPromptTemplate / *Message arguments. Prompts built at runtime
+    (loaded from files or a database, assembled by functions) cannot be seen here."""
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return []
+
+    found: list[tuple[int, str, str]] = []
+
+    def add(line: int, name: str, node: ast.AST) -> None:
+        text = _literal_text(node)
+        if text is not None and _looks_like_prompt(text):
+            found.append((line, name, text))
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                name = target.id if isinstance(target, ast.Name) else getattr(target, "attr", "")
+                if name and PROMPT_NAME_RE.search(name):
+                    add(node.lineno, name, node.value)
+        elif isinstance(node, ast.Call):
+            call = _call_name(node.func)
+            for kw in node.keywords:
+                if kw.arg in PROMPT_TEXT_KWARGS:
+                    add(kw.value.lineno, f"{call}({kw.arg}=)", kw.value)
+                elif kw.arg == "messages" and isinstance(kw.value, (ast.List, ast.Tuple)):
+                    for item in kw.value.elts:
+                        if isinstance(item, ast.Dict):
+                            for key, value in zip(item.keys, item.values):
+                                if isinstance(key, ast.Constant) and key.value == "content":
+                                    add(value.lineno, f"{call}(messages content)", value)
+            if call in PROMPT_TEMPLATE_CALLS:
+                for arg in node.args:
+                    if isinstance(arg, (ast.List, ast.Tuple)):  # from_messages([("system", "..."), ...])
+                        for item in arg.elts:
+                            if isinstance(item, ast.Tuple) and len(item.elts) == 2:
+                                role = _literal_text(item.elts[0]) or "message"
+                                add(item.elts[1].lineno, f"{call}({role})", item.elts[1])
+                    else:
+                        add(arg.lineno, f"{call}()", arg)
+
+    prompts, seen = [], set()
+    for line, name, text in sorted(found):
+        if (line, text) in seen:
+            continue
+        seen.add((line, text))
+        prompts.append({
+            "name": name,
+            "line": line,
+            "text": text[:MAX_PROMPT_CHARS],
+            "truncated": len(text) > MAX_PROMPT_CHARS,
+        })
+    return prompts
 
 
 def scan_prompt_source(rel_path: str, source: str) -> list[tuple[str, str, str, Occurrence]]:

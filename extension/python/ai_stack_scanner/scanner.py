@@ -9,7 +9,7 @@ from .entry_point_agents import infer_entry_point_agents
 from .entry_points import find_entry_points
 from .fsutil import prune_dirs
 from .import_graph import build_module_index, build_python_import_graph
-from .local_agents import infer_local_agents, scan_prompt_source
+from .local_agents import extract_prompt_texts, infer_local_agents, scan_prompt_source
 from .registry import MCP_CONFIG_FILENAMES, DEPENDENCY_FILES
 from .runtime_edges import build_runtime_container_edges
 
@@ -66,7 +66,14 @@ def scan_directory(
                     source = f.read()
                 python_sources[rel] = source
                 findings = scan_source(rel, source)
-                findings.extend(scan_prompt_source(rel, source))
+                prompt_findings = scan_prompt_source(rel, source)
+                findings.extend(prompt_findings)
+                if prompt_findings:
+                    component = prompt_findings[0][1]
+                    result.prompts.extend(
+                        {"component": component, "file": rel, **prompt}
+                        for prompt in extract_prompt_texts(source)
+                    )
                 result.scanned_files += 1
             elif fn in MCP_CONFIG_FILENAMES:
                 with open(path, "r", encoding="utf-8", errors="ignore") as f:

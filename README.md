@@ -61,6 +61,10 @@ header. No token or Org is typed, and the token is not stored.
 
 `aiStackMapper.vaultBaseUrl` and `aiStackMapper.vaultLoginUrl` must point at the same environment.
 
+The published scan includes the full text of every prompt written statically in Python source (`stack.prompts`:
+component, file, line, name, text, capped at 20,000 characters each). Vault stores it on the prompt's Codebase Skill
+as `prompt_text`. Prompts built at runtime, or loaded from files or a database, are not captured.
+
 ## Vault backend requirement
 
 The Vault backend must expose:
